@@ -13,7 +13,7 @@ declare global {
     kakao: {
       maps: {
         load: (callback: () => void) => void
-        Map: new (container: HTMLElement, options: { center: { lat: number; lng: number }; level: number }) => KakaoMap
+        Map: new (container: HTMLElement, options: { center: KakaoLatLng; level: number }) => KakaoMap
         LatLng: new (lat: number, lng: number) => KakaoLatLng
         Marker: new (options: { position: KakaoLatLng; map?: KakaoMap }) => KakaoMarker
         InfoWindow: new (options: { content: string }) => KakaoInfoWindow
