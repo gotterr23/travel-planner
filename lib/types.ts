@@ -10,6 +10,7 @@ export interface Trip {
   admin_token: string
   member_token: string
   photo_categories: string[]
+  board_categories: string[]
   created_at: string
 }
 
@@ -36,6 +37,7 @@ export interface ReferenceItem {
   url: string | null
   image_url: string | null
   memo: string | null
+  category: string
   created_at: string
 }
 
