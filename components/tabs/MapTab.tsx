@@ -87,8 +87,10 @@ export default function MapTab({ trip }: Props) {
   }, [apiKey])
 
   useEffect(() => {
-    if (!mapLoaded || !mapRef.current || schedules.length === 0) return
-    initMap()
+    if (!mapLoaded || !mapRef.current) return
+    // 약간의 지연을 주어 DOM이 완전히 렌더링된 후 지도 초기화
+    const timer = setTimeout(() => initMap(), 100)
+    return () => clearTimeout(timer)
   }, [mapLoaded, schedules, selectedDate])
 
   async function loadSchedules() {

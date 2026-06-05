@@ -34,6 +34,10 @@ export default function BoardTab({ trip, isAdmin }: Props) {
   const [categories, setCategories] = useState<string[]>(
     trip.board_categories?.length ? trip.board_categories : DEFAULT_CATEGORIES
   )
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [pendingCategory, setPendingCategory] = useState<string>('')
+  const [pendingMemo, setPendingMemo] = useState<string>('')
+  const [showUploadPicker, setShowUploadPicker] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [linkForm, setLinkForm] = useState({ title: '', url: '', memo: '', category: categories[0] || '기타' })
@@ -89,23 +93,27 @@ export default function BoardTab({ trip, isAdmin }: Props) {
     loadItems()
   }
 
-  async function uploadImage(file: File, category: string) {
+  async function uploadPendingImage() {
+    if (!pendingFile) return
     setUploading(true)
-    const ext = file.name.split('.').pop()
+    setShowUploadPicker(false)
+    const ext = pendingFile.name.split('.').pop()
     const fileName = `${trip.id}/${Date.now()}.${ext}`
 
-    const { error: uploadError } = await supabase.storage.from('references').upload(fileName, file)
+    const { error: uploadError } = await supabase.storage.from('references').upload(fileName, pendingFile)
     if (!uploadError) {
       const { data: urlData } = supabase.storage.from('references').getPublicUrl(fileName)
       await supabase.from('reference_items').insert({
         trip_id: trip.id,
         type: 'image',
         image_url: urlData.publicUrl,
-        title: file.name,
-        category,
+        title: pendingFile.name,
+        category: pendingCategory,
+        memo: pendingMemo.trim() || null,
       })
       loadItems()
     }
+    setPendingFile(null)
     setUploading(false)
   }
 
@@ -173,7 +181,12 @@ export default function BoardTab({ trip, isAdmin }: Props) {
         <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
           onChange={e => {
             const file = e.target.files?.[0]
-            if (file) uploadImage(file, filterCategory === 'all' ? (categories[0] || '기타') : filterCategory)
+            if (file) {
+              setPendingFile(file)
+              setPendingCategory(filterCategory === 'all' ? (categories[0] || '기타') : filterCategory)
+              setPendingMemo('')
+              setShowUploadPicker(true)
+            }
             e.target.value = ''
           }} />
       </div>
@@ -292,6 +305,54 @@ export default function BoardTab({ trip, isAdmin }: Props) {
                 )}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* 사진 업로드 전 카테고리/설명 입력 */}
+      {showUploadPicker && pendingFile && (
+        <div className="fixed inset-0 bg-black/50 flex items-end justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4">
+            <h3 className="font-bold text-slate-800">사진 정보 입력</h3>
+            <img
+              src={URL.createObjectURL(pendingFile)}
+              alt=""
+              className="w-full h-40 object-cover rounded-xl"
+            />
+            <div>
+              <p className="text-xs font-medium text-slate-500 mb-2">카테고리</p>
+              <div className="flex flex-wrap gap-2">
+                {categories.map(c => (
+                  <button
+                    key={c}
+                    onClick={() => setPendingCategory(c)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                      pendingCategory === c ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600'
+                    }`}
+                  >
+                    {getCategoryEmoji(c)} {c}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500 mb-1">설명 (선택)</p>
+              <input
+                type="text"
+                value={pendingMemo}
+                onChange={e => setPendingMemo(e.target.value)}
+                placeholder="이 사진에 대한 메모를 입력해주세요"
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            </div>
+            <div className="flex gap-2">
+              <button onClick={uploadPendingImage} className="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-medium py-3 rounded-xl text-sm">
+                업로드
+              </button>
+              <button onClick={() => { setShowUploadPicker(false); setPendingFile(null) }} className="flex-1 bg-slate-100 text-slate-600 font-medium py-3 rounded-xl text-sm">
+                취소
+              </button>
+            </div>
           </div>
         </div>
       )}
