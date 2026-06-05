@@ -4,18 +4,6 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import type { Trip, Schedule } from '@/lib/types'
 
-declare global {
-  interface Window {
-    kakao: {
-      maps: {
-        services: {
-          Geocoder: new () => { addressSearch: (addr: string, cb: (r: Array<{x: string; y: string}>, s: string) => void) => void }
-          Status: { OK: string }
-        }
-      }
-    }
-  }
-}
 
 interface Props {
   trip: Trip
