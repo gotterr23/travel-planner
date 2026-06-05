@@ -4,6 +4,19 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import type { Trip, Schedule } from '@/lib/types'
 
+declare global {
+  interface Window {
+    kakao: {
+      maps: {
+        services: {
+          Geocoder: new () => { addressSearch: (addr: string, cb: (r: Array<{x: string; y: string}>, s: string) => void) => void }
+          Status: { OK: string }
+        }
+      }
+    }
+  }
+}
+
 interface Props {
   trip: Trip
   isAdmin: boolean
@@ -39,14 +52,33 @@ export default function ScheduleTab({ trip, isAdmin: _isAdmin }: Props) {
     setLoading(false)
   }
 
+  async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
+    return new Promise((resolve) => {
+      if (!window.kakao?.maps?.services) { resolve(null); return }
+      const geocoder = new window.kakao.maps.services.Geocoder()
+      geocoder.addressSearch(address, (result, status) => {
+        if (status === window.kakao.maps.services.Status.OK && result[0]) {
+          resolve({ lat: parseFloat(result[0].y), lng: parseFloat(result[0].x) })
+        } else resolve(null)
+      })
+    })
+  }
+
   async function saveSchedule() {
     if (!form.place_name.trim()) return
+
+    let coords: { lat: number; lng: number } | null = null
+    if (form.address.trim()) {
+      coords = await geocodeAddress(form.address.trim())
+    }
 
     if (editingId) {
       await supabase.from('schedules').update({
         date: form.date,
         place_name: form.place_name.trim(),
         address: form.address.trim() || null,
+        latitude: coords?.lat || null,
+        longitude: coords?.lng || null,
         time: form.time || null,
         memo: form.memo.trim() || null,
         participants: form.participants.trim() || null,
@@ -58,6 +90,8 @@ export default function ScheduleTab({ trip, isAdmin: _isAdmin }: Props) {
         date: form.date,
         place_name: form.place_name.trim(),
         address: form.address.trim() || null,
+        latitude: coords?.lat || null,
+        longitude: coords?.lng || null,
         time: form.time || null,
         memo: form.memo.trim() || null,
         participants: form.participants.trim() || null,

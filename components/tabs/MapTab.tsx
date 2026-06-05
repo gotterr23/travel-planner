@@ -107,12 +107,12 @@ export default function MapTab({ trip }: Props) {
 
     if (!mapRef.current) return
 
-    const center = filtered.length > 0
-      ? { lat: filtered[0].latitude!, lng: filtered[0].longitude! }
-      : { lat: 37.5665, lng: 126.9780 }
+    const centerLat = filtered.length > 0 ? filtered[0].latitude! : 37.5665
+    const centerLng = filtered.length > 0 ? filtered[0].longitude! : 126.9780
+    const centerLatLng = new window.kakao.maps.LatLng(centerLat, centerLng)
 
     const map = new window.kakao.maps.Map(mapRef.current, {
-      center,
+      center: centerLatLng,
       level: 7,
     })
     mapInstanceRef.current = map

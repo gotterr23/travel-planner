@@ -28,6 +28,9 @@ export default function BoardTab({ trip, isAdmin }: Props) {
   const [showCategoryManager, setShowCategoryManager] = useState(false)
   const [filterCategory, setFilterCategory] = useState<string>('all')
   const [newCategoryName, setNewCategoryName] = useState('')
+  const [selectedImage, setSelectedImage] = useState<ReferenceItem | null>(null)
+  const [editCategory, setEditCategory] = useState('')
+  const [editMemo, setEditMemo] = useState('')
   const [categories, setCategories] = useState<string[]>(
     trip.board_categories?.length ? trip.board_categories : DEFAULT_CATEGORIES
   )
@@ -109,6 +112,23 @@ export default function BoardTab({ trip, isAdmin }: Props) {
   async function deleteItem(id: string) {
     if (!confirm('삭제할까요?')) return
     await supabase.from('reference_items').delete().eq('id', id)
+    setSelectedImage(null)
+    loadItems()
+  }
+
+  function openImageDetail(item: ReferenceItem) {
+    setSelectedImage(item)
+    setEditCategory(item.category)
+    setEditMemo(item.memo || '')
+  }
+
+  async function saveImageDetail() {
+    if (!selectedImage) return
+    await supabase.from('reference_items').update({
+      category: editCategory,
+      memo: editMemo.trim() || null,
+    }).eq('id', selectedImage.id)
+    setSelectedImage(null)
     loadItems()
   }
 
@@ -256,17 +276,68 @@ export default function BoardTab({ trip, isAdmin }: Props) {
           <h3 className="font-semibold text-slate-700 text-sm mb-2">📷 사진 ({filteredImages.length})</h3>
           <div className="grid grid-cols-2 gap-2">
             {filteredImages.map(item => (
-              <div key={item.id} className="relative group rounded-xl overflow-hidden aspect-square bg-slate-100">
+              <div
+                key={item.id}
+                onClick={() => openImageDetail(item)}
+                className="relative group rounded-xl overflow-hidden aspect-square bg-slate-100 cursor-pointer hover:opacity-90 transition-opacity"
+              >
                 <img src={item.image_url!} alt={item.title || ''} className="w-full h-full object-cover" />
                 <div className="absolute bottom-1 left-1 bg-black/40 rounded-full px-1.5 py-0.5 text-xs text-white">
-                  {getCategoryEmoji(item.category)}
+                  {getCategoryEmoji(item.category)} {item.category}
                 </div>
-                <button
-                  onClick={() => deleteItem(item.id)}
-                  className="absolute top-1.5 right-1.5 bg-black/50 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-                >✕</button>
+                {item.memo && (
+                  <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-xs px-2 py-1 truncate">
+                    {item.memo}
+                  </div>
+                )}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* 사진 상세 모달 */}
+      {selectedImage && (
+        <div className="fixed inset-0 bg-black/80 flex items-end justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden">
+            <img src={selectedImage.image_url!} alt="" className="w-full max-h-64 object-cover" />
+            <div className="p-4 space-y-3">
+              {/* 카테고리 선택 */}
+              <div>
+                <p className="text-xs font-medium text-slate-500 mb-2">카테고리</p>
+                <div className="flex flex-wrap gap-2">
+                  {categories.map(c => (
+                    <button
+                      key={c}
+                      onClick={() => setEditCategory(c)}
+                      className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                        editCategory === c ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600'
+                      }`}
+                    >
+                      {getCategoryEmoji(c)} {c}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 설명 입력 */}
+              <div>
+                <p className="text-xs font-medium text-slate-500 mb-1">설명</p>
+                <input
+                  type="text"
+                  value={editMemo}
+                  onChange={e => setEditMemo(e.target.value)}
+                  placeholder="이 사진에 대한 메모를 입력해주세요"
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <button onClick={saveImageDetail} className="flex-1 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium py-2.5 rounded-xl">저장</button>
+                <button onClick={() => deleteItem(selectedImage.id)} className="bg-red-50 hover:bg-red-100 text-red-500 text-sm font-medium px-4 py-2.5 rounded-xl">삭제</button>
+                <button onClick={() => setSelectedImage(null)} className="flex-1 bg-slate-100 text-slate-600 text-sm font-medium py-2.5 rounded-xl">닫기</button>
+              </div>
+            </div>
           </div>
         </div>
       )}
