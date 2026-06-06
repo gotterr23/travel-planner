@@ -33,6 +33,19 @@ export default function TripPage() {
   const [showShareModal, setShowShareModal] = useState(false)
   const [copied, setCopied] = useState('')
 
+  // 탭 간 포커스 연동
+  const [focusBoardId, setFocusBoardId] = useState<string | null>(null)
+  const [focusAlbumId, setFocusAlbumId] = useState<string | null>(null)
+
+  // 수정 모달 상태
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [editStartDate, setEditStartDate] = useState('')
+  const [editEndDate, setEditEndDate] = useState('')
+  const [editLoading, setEditLoading] = useState(false)
+  const [editError, setEditError] = useState('')
+
   useEffect(() => {
     async function loadTrip() {
       const column = role === 'admin' ? 'admin_token' : 'member_token'
@@ -61,6 +74,48 @@ export default function TripPage() {
     }
     loadTrip()
   }, [token, role])
+
+  function openEditModal() {
+    if (!trip) return
+    setEditTitle(trip.title)
+    setEditDescription(trip.description ?? '')
+    setEditStartDate(trip.start_date ?? '')
+    setEditEndDate(trip.end_date ?? '')
+    setEditError('')
+    setShowEditModal(true)
+  }
+
+  async function saveEdit() {
+    if (!trip) return
+    if (!editTitle.trim()) {
+      setEditError('여행 이름을 입력해주세요')
+      return
+    }
+    setEditLoading(true)
+    setEditError('')
+    try {
+      const { data, error: dbError } = await supabase
+        .from('trips')
+        .update({
+          title: editTitle.trim(),
+          description: editDescription.trim() || null,
+          start_date: editStartDate || null,
+          end_date: editEndDate || null,
+        })
+        .eq('id', trip.id)
+        .select()
+        .single()
+
+      if (dbError) throw dbError
+      setTrip(data)
+      setShowEditModal(false)
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : '저장 중 오류가 발생했습니다'
+      setEditError(message)
+    } finally {
+      setEditLoading(false)
+    }
+  }
 
   function copyLink(type: 'admin' | 'member') {
     if (!trip) return
@@ -115,6 +170,14 @@ export default function TripPage() {
             {isAdmin && (
               <span className="bg-blue-100 text-blue-600 text-xs font-medium px-2 py-1 rounded-full">방장</span>
             )}
+            {isAdmin && (
+              <button
+                onClick={openEditModal}
+                className="border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
+              >
+                수정
+              </button>
+            )}
             <button
               onClick={() => setShowShareModal(true)}
               className="bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
@@ -145,10 +208,31 @@ export default function TripPage() {
 
       {/* 탭 콘텐츠 */}
       <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-4">
-        {activeTab === 'schedule' && <ScheduleTab trip={trip} isAdmin={isAdmin} />}
+        {activeTab === 'schedule' && (
+          <ScheduleTab
+            trip={trip}
+            isAdmin={isAdmin}
+            onGoToBoard={(id) => { setFocusBoardId(id); setActiveTab('board') }}
+            onGoToAlbum={(id) => { setFocusAlbumId(id); setActiveTab('album') }}
+          />
+        )}
         {activeTab === 'map' && <MapTab trip={trip} />}
-        {activeTab === 'board' && <BoardTab trip={trip} isAdmin={isAdmin} />}
-        {activeTab === 'album' && <AlbumTab trip={trip} isAdmin={isAdmin} />}
+        {activeTab === 'board' && (
+          <BoardTab
+            trip={trip}
+            isAdmin={isAdmin}
+            focusScheduleId={focusBoardId}
+            onFocusHandled={() => setFocusBoardId(null)}
+          />
+        )}
+        {activeTab === 'album' && (
+          <AlbumTab
+            trip={trip}
+            isAdmin={isAdmin}
+            focusScheduleId={focusAlbumId}
+            onFocusHandled={() => setFocusAlbumId(null)}
+          />
+        )}
         {activeTab === 'budget' && <BudgetTab trip={trip} isAdmin={isAdmin} />}
       </main>
 
@@ -192,6 +276,82 @@ export default function TripPage() {
             </div>
 
             <p className="text-xs text-slate-400 text-center">링크를 받은 사람은 누구든 접근할 수 있어요</p>
+          </div>
+        </div>
+      )}
+
+      {/* 수정 모달 */}
+      {showEditModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-end justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-slate-800 text-lg">여행 정보 수정</h3>
+              <button onClick={() => setShowEditModal(false)} className="text-slate-400 hover:text-slate-600 text-xl">✕</button>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-600 mb-1">
+                여행 이름 <span className="text-red-400">*</span>
+              </label>
+              <input
+                type="text"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                className="w-full border border-slate-200 rounded-xl px-4 py-3 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-600 mb-1">한 줄 설명</label>
+              <input
+                type="text"
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+                placeholder="선택 사항"
+                className="w-full border border-slate-200 rounded-xl px-4 py-3 text-slate-800 placeholder-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-slate-600 mb-1">출발일</label>
+                <input
+                  type="date"
+                  value={editStartDate}
+                  onChange={(e) => setEditStartDate(e.target.value)}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-3 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-600 mb-1">귀국일</label>
+                <input
+                  type="date"
+                  value={editEndDate}
+                  onChange={(e) => setEditEndDate(e.target.value)}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-3 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                />
+              </div>
+            </div>
+
+            {editError && (
+              <p className="text-red-500 text-sm bg-red-50 rounded-lg px-3 py-2">{editError}</p>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="flex-1 border border-slate-200 text-slate-600 font-medium rounded-xl py-3 hover:bg-slate-50 transition-colors"
+              >
+                취소
+              </button>
+              <button
+                onClick={saveEdit}
+                disabled={editLoading}
+                className="flex-1 bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 text-white font-semibold rounded-xl py-3 transition-colors"
+              >
+                {editLoading ? '저장 중...' : '저장하기'}
+              </button>
+            </div>
           </div>
         </div>
       )}

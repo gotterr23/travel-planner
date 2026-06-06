@@ -4,13 +4,14 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import type { Trip, Schedule } from '@/lib/types'
 
-
 interface Props {
   trip: Trip
   isAdmin: boolean
+  onGoToBoard?: (scheduleId: string) => void
+  onGoToAlbum?: (scheduleId: string) => void
 }
 
-export default function ScheduleTab({ trip, isAdmin: _isAdmin }: Props) {
+export default function ScheduleTab({ trip, isAdmin: _isAdmin, onGoToBoard, onGoToAlbum }: Props) {
   const [schedules, setSchedules] = useState<Schedule[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
@@ -22,7 +23,6 @@ export default function ScheduleTab({ trip, isAdmin: _isAdmin }: Props) {
     address: '',
     time: '',
     memo: '',
-    participants: '',
   })
 
   useEffect(() => {
@@ -35,47 +35,21 @@ export default function ScheduleTab({ trip, isAdmin: _isAdmin }: Props) {
       .select('*')
       .eq('trip_id', trip.id)
       .order('date', { ascending: true })
-    const sorted = (data || []).sort((a, b) => {
-      if (a.date !== b.date) return a.date.localeCompare(b.date)
-      if (a.time && b.time) return a.time.localeCompare(b.time)
-      if (a.time) return -1
-      if (b.time) return 1
-      return a.order_index - b.order_index
-    })
-    setSchedules(sorted)
+      .order('order_index', { ascending: true })
+    setSchedules(data || [])
     setLoading(false)
-  }
-
-  async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
-    return new Promise((resolve) => {
-      if (!window.kakao?.maps?.services) { resolve(null); return }
-      const geocoder = new window.kakao.maps.services.Geocoder()
-      geocoder.addressSearch(address, (result, status) => {
-        if (status === window.kakao.maps.services.Status.OK && result[0]) {
-          resolve({ lat: parseFloat(result[0].y), lng: parseFloat(result[0].x) })
-        } else resolve(null)
-      })
-    })
   }
 
   async function saveSchedule() {
     if (!form.place_name.trim()) return
-
-    let coords: { lat: number; lng: number } | null = null
-    if (form.address.trim()) {
-      coords = await geocodeAddress(form.address.trim())
-    }
 
     if (editingId) {
       await supabase.from('schedules').update({
         date: form.date,
         place_name: form.place_name.trim(),
         address: form.address.trim() || null,
-        latitude: coords?.lat || null,
-        longitude: coords?.lng || null,
         time: form.time || null,
         memo: form.memo.trim() || null,
-        participants: form.participants.trim() || null,
       }).eq('id', editingId)
     } else {
       const sameDay = schedules.filter(s => s.date === form.date)
@@ -84,11 +58,8 @@ export default function ScheduleTab({ trip, isAdmin: _isAdmin }: Props) {
         date: form.date,
         place_name: form.place_name.trim(),
         address: form.address.trim() || null,
-        latitude: coords?.lat || null,
-        longitude: coords?.lng || null,
         time: form.time || null,
         memo: form.memo.trim() || null,
-        participants: form.participants.trim() || null,
         order_index: sameDay.length,
       })
     }
@@ -104,13 +75,13 @@ export default function ScheduleTab({ trip, isAdmin: _isAdmin }: Props) {
   }
 
   function startEdit(s: Schedule) {
-    setForm({ date: s.date, place_name: s.place_name, address: s.address || '', time: s.time || '', memo: s.memo || '', participants: s.participants || '' })
+    setForm({ date: s.date, place_name: s.place_name, address: s.address || '', time: s.time || '', memo: s.memo || '' })
     setEditingId(s.id)
     setShowForm(true)
   }
 
   function resetForm() {
-    setForm({ date: trip.start_date || '', place_name: '', address: '', time: '', memo: '', participants: '' })
+    setForm({ date: trip.start_date || '', place_name: '', address: '', time: '', memo: '' })
     setEditingId(null)
     setShowForm(false)
   }
@@ -171,11 +142,6 @@ export default function ScheduleTab({ trip, isAdmin: _isAdmin }: Props) {
               placeholder="예: 오사카시 주오구 도톤보리" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
           </div>
           <div>
-            <label className="text-xs text-slate-500 mb-1 block">참여 인원 (선택)</label>
-            <input type="text" value={form.participants} onChange={e => setForm(f => ({ ...f, participants: e.target.value }))}
-              placeholder="예: 전체 인원 / 시원, 민정" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-          </div>
-          <div>
             <label className="text-xs text-slate-500 mb-1 block">메모 (선택)</label>
             <textarea value={form.memo} onChange={e => setForm(f => ({ ...f, memo: e.target.value }))}
               placeholder="예: 예약 필요, 저녁 7시" rows={2}
@@ -214,11 +180,28 @@ export default function ScheduleTab({ trip, isAdmin: _isAdmin }: Props) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="font-medium text-slate-800">{s.place_name}</p>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-medium text-slate-800">{s.place_name}</p>
+                          {onGoToBoard && (
+                            <button
+                              onClick={() => onGoToBoard(s.id)}
+                              className="text-xs text-blue-500 bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-full transition-colors whitespace-nowrap"
+                            >
+                              준비 보드 →
+                            </button>
+                          )}
+                          {onGoToAlbum && (
+                            <button
+                              onClick={() => onGoToAlbum(s.id)}
+                              className="text-xs text-purple-500 bg-purple-50 hover:bg-purple-100 px-2 py-0.5 rounded-full transition-colors whitespace-nowrap"
+                            >
+                              앨범 →
+                            </button>
+                          )}
+                        </div>
                         {s.time && <p className="text-xs text-slate-400 mt-0.5">🕐 {s.time}</p>}
                         {s.address && <p className="text-xs text-slate-400 mt-0.5">📍 {s.address}</p>}
-                        {s.participants && <p className="text-xs text-slate-400 mt-0.5">👥 {s.participants}</p>}
                         {s.memo && <p className="text-sm text-slate-500 mt-1 bg-slate-50 rounded-lg px-2 py-1">{s.memo}</p>}
                       </div>
                       <div className="flex gap-1 shrink-0">

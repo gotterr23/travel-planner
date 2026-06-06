@@ -13,7 +13,7 @@ declare global {
     kakao: {
       maps: {
         load: (callback: () => void) => void
-        Map: new (container: HTMLElement, options: { center: KakaoLatLng; level: number }) => KakaoMap
+        Map: new (container: HTMLElement, options: { center: { lat: number; lng: number }; level: number }) => KakaoMap
         LatLng: new (lat: number, lng: number) => KakaoLatLng
         Marker: new (options: { position: KakaoLatLng; map?: KakaoMap }) => KakaoMarker
         InfoWindow: new (options: { content: string }) => KakaoInfoWindow
@@ -87,10 +87,8 @@ export default function MapTab({ trip }: Props) {
   }, [apiKey])
 
   useEffect(() => {
-    if (!mapLoaded || !mapRef.current) return
-    // 약간의 지연을 주어 DOM이 완전히 렌더링된 후 지도 초기화
-    const timer = setTimeout(() => initMap(), 100)
-    return () => clearTimeout(timer)
+    if (!mapLoaded || !mapRef.current || schedules.length === 0) return
+    initMap()
   }, [mapLoaded, schedules, selectedDate])
 
   async function loadSchedules() {
@@ -98,8 +96,19 @@ export default function MapTab({ trip }: Props) {
       .from('schedules')
       .select('*')
       .eq('trip_id', trip.id)
-      .order('date').order('order_index')
-    setSchedules(data || [])
+      .order('date', { ascending: true })
+      .order('time', { ascending: true, nullsFirst: false })
+      .order('order_index', { ascending: true })
+
+    // 날짜 → 시간(null은 마지막) → order_index 순으로 클라이언트에서도 보장
+    const sorted = [...(data || [])].sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date)
+      if (a.time && b.time) return a.time.localeCompare(b.time)
+      if (a.time) return -1
+      if (b.time) return 1
+      return a.order_index - b.order_index
+    })
+    setSchedules(sorted)
   }
 
   function initMap() {
@@ -109,12 +118,12 @@ export default function MapTab({ trip }: Props) {
 
     if (!mapRef.current) return
 
-    const centerLat = filtered.length > 0 ? filtered[0].latitude! : 37.5665
-    const centerLng = filtered.length > 0 ? filtered[0].longitude! : 126.9780
-    const centerLatLng = new window.kakao.maps.LatLng(centerLat, centerLng)
+    const center = filtered.length > 0
+      ? { lat: filtered[0].latitude!, lng: filtered[0].longitude! }
+      : { lat: 37.5665, lng: 126.9780 }
 
     const map = new window.kakao.maps.Map(mapRef.current, {
-      center: centerLatLng,
+      center,
       level: 7,
     })
     mapInstanceRef.current = map

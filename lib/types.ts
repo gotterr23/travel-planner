@@ -9,8 +9,7 @@ export interface Trip {
   cover_image_url: string | null
   admin_token: string
   member_token: string
-  photo_categories: string[]
-  board_categories: string[]
+  settings: { budgetCategories?: Record<string, string> } | null
   created_at: string
 }
 
@@ -25,7 +24,6 @@ export interface Schedule {
   longitude: number | null
   memo: string | null
   time: string | null
-  participants: string | null
   created_at: string
 }
 
@@ -37,31 +35,17 @@ export interface ReferenceItem {
   url: string | null
   image_url: string | null
   memo: string | null
-  category: string
+  schedule_id: string | null
+  schedule_ids: string[]
   created_at: string
 }
-
-export type PhotoCategory = '풍경' | '음식' | '숙소' | '교통' | '사람' | '기타'
 
 export interface Photo {
   id: string
   trip_id: string
   image_url: string
   caption: string | null
-  category: PhotoCategory
-  created_at: string
-}
-
-export interface ChecklistItem {
-  id: string
-  trip_id: string
-  category: string | null
-  place: string | null
-  time: string | null
-  item: string
-  note: string | null
-  checked: boolean
-  order_index: number
+  schedule_id: string | null
   created_at: string
 }
 
