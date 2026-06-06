@@ -55,8 +55,8 @@ export default function TripPage() {
         .eq(column, token)
         .single()
 
-      if (!data) {
-        // admin_token으로 못 찾으면 member_token으로도 시도
+      let foundTrip = data
+      if (!foundTrip) {
         const { data: data2 } = await supabase
           .from('trips')
           .select('*')
@@ -64,12 +64,25 @@ export default function TripPage() {
           .single()
         if (!data2) {
           setNotFound(true)
-        } else {
-          setTrip(data2)
+          setLoading(false)
+          return
         }
-      } else {
-        setTrip(data)
+        foundTrip = data2
       }
+
+      setTrip(foundTrip)
+
+      // 방장 링크로 접속한 경우 admin_token을 localStorage에 저장 → 홈 목록에 자동 등록
+      if (role === 'admin' && typeof window !== 'undefined') {
+        try {
+          const TOKENS_KEY = 'travel_planner_admin_tokens'
+          const stored = JSON.parse(localStorage.getItem(TOKENS_KEY) || '[]') as string[]
+          if (!stored.includes(foundTrip.admin_token)) {
+            localStorage.setItem(TOKENS_KEY, JSON.stringify([...stored, foundTrip.admin_token]))
+          }
+        } catch { /* localStorage 접근 불가 환경 무시 */ }
+      }
+
       setLoading(false)
     }
     loadTrip()
