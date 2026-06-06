@@ -501,11 +501,25 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
               <button onClick={() => setShowItemModal(false)} className="text-slate-400 text-xl">✕</button>
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-500 mb-1 block">카테고리</label>
-              <select value={itemForm.scheduleId} onChange={e => setItemForm(f => ({ ...f, scheduleId: e.target.value }))}
+              <label className="text-xs font-medium text-slate-500 mb-1 block">카테고리 (일정 연동)</label>
+              <select
+                value={itemForm.scheduleId}
+                onChange={e => {
+                  const id = e.target.value
+                  const sched = schedules.find(s => s.id === id)
+                  setItemForm(f => ({
+                    ...f,
+                    scheduleId: id,
+                    place: id && sched?.address ? sched.address : f.place,
+                  }))
+                }}
                 className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white">
                 <option value="">분류 없음</option>
-                {schedules.map(s => <option key={s.id} value={s.id}>📍 {s.place_name}</option>)}
+                {schedules.map(s => (
+                  <option key={s.id} value={s.id}>
+                    📍 {s.place_name}{s.address ? ` — ${s.address}` : ''}
+                  </option>
+                ))}
               </select>
             </div>
             <div className="grid grid-cols-2 gap-3">

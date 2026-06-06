@@ -25,6 +25,7 @@ export interface Schedule {
   longitude: number | null
   memo: string | null
   time: string | null
+  participants: string | null
   created_at: string
 }
 

@@ -62,6 +62,7 @@ export default function MapTab({ trip }: Props) {
   const mapRef = useRef<HTMLDivElement>(null)
   const [schedules, setSchedules] = useState<Schedule[]>([])
   const [mapLoaded, setMapLoaded] = useState(false)
+  const [mapError, setMapError] = useState(false)
   const [selectedDate, setSelectedDate] = useState<string>('all')
   const mapInstanceRef = useRef<KakaoMap | null>(null)
 
@@ -74,15 +75,20 @@ export default function MapTab({ trip }: Props) {
   useEffect(() => {
     if (!apiKey || apiKey === '여기에_카카오맵_api_키_입력') return
     if (document.getElementById('kakao-map-script')) {
-      setMapLoaded(true)
+      if (window.kakao?.maps) setMapLoaded(true)
       return
     }
     const script = document.createElement('script')
     script.id = 'kakao-map-script'
     script.src = `//dapi.kakao.com/v2/maps/sdk.js?appkey=${apiKey}&libraries=services&autoload=false`
     script.onload = () => {
-      window.kakao.maps.load(() => setMapLoaded(true))
+      try {
+        window.kakao.maps.load(() => setMapLoaded(true))
+      } catch {
+        setMapError(true)
+      }
     }
+    script.onerror = () => setMapError(true)
     document.head.appendChild(script)
   }, [apiKey])
 
@@ -112,6 +118,7 @@ export default function MapTab({ trip }: Props) {
   }
 
   function initMap() {
+    try {
     const filtered = selectedDate === 'all'
       ? schedules.filter(s => s.latitude && s.longitude)
       : schedules.filter(s => s.date === selectedDate && s.latitude && s.longitude)
@@ -153,6 +160,9 @@ export default function MapTab({ trip }: Props) {
       })
       polyline.setMap(map)
     }
+    } catch {
+      setMapError(true)
+    }
   }
 
   const dates = [...new Set(schedules.map(s => s.date))].sort()
@@ -163,6 +173,25 @@ export default function MapTab({ trip }: Props) {
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
           <p className="font-semibold text-amber-700 text-sm mb-1">카카오맵 API 키가 필요해요</p>
           <p className="text-amber-600 text-xs">.env.local 파일에 NEXT_PUBLIC_KAKAO_MAP_KEY를 입력해주세요</p>
+        </div>
+        <ScheduleList schedules={schedules} />
+      </div>
+    )
+  }
+
+  if (mapError) {
+    return (
+      <div className="space-y-4">
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-2">
+          <p className="font-semibold text-red-700 text-sm">🗺️ 지도를 불러올 수 없어요</p>
+          <p className="text-red-600 text-xs leading-relaxed">
+            카카오맵 API 키에 현재 사이트 주소가 등록되지 않아 발생하는 오류입니다.<br />
+            <strong>해결 방법:</strong> kakao developers.kakao.com → 내 애플리케이션 → 앱 설정 → 플랫폼 → Web → 사이트 도메인에
+            아래 주소를 추가해주세요
+          </p>
+          <p className="text-xs bg-red-100 text-red-700 px-3 py-2 rounded-lg font-mono break-all">
+            {typeof window !== 'undefined' ? window.location.origin : '현재 배포 URL'}
+          </p>
         </div>
         <ScheduleList schedules={schedules} />
       </div>

@@ -23,11 +23,10 @@ export default function ScheduleTab({ trip, isAdmin: _isAdmin, onGoToBoard, onGo
     address: '',
     time: '',
     memo: '',
+    participants: '',
   })
 
-  useEffect(() => {
-    loadSchedules()
-  }, [trip.id])
+  useEffect(() => { loadSchedules() }, [trip.id])
 
   async function loadSchedules() {
     const { data } = await supabase
@@ -43,23 +42,22 @@ export default function ScheduleTab({ trip, isAdmin: _isAdmin, onGoToBoard, onGo
   async function saveSchedule() {
     if (!form.place_name.trim()) return
 
+    const payload = {
+      date: form.date,
+      place_name: form.place_name.trim(),
+      address: form.address.trim() || null,
+      time: form.time || null,
+      memo: form.memo.trim() || null,
+      participants: form.participants.trim() || null,
+    }
+
     if (editingId) {
-      await supabase.from('schedules').update({
-        date: form.date,
-        place_name: form.place_name.trim(),
-        address: form.address.trim() || null,
-        time: form.time || null,
-        memo: form.memo.trim() || null,
-      }).eq('id', editingId)
+      await supabase.from('schedules').update(payload).eq('id', editingId)
     } else {
       const sameDay = schedules.filter(s => s.date === form.date)
       await supabase.from('schedules').insert({
         trip_id: trip.id,
-        date: form.date,
-        place_name: form.place_name.trim(),
-        address: form.address.trim() || null,
-        time: form.time || null,
-        memo: form.memo.trim() || null,
+        ...payload,
         order_index: sameDay.length,
       })
     }
@@ -75,18 +73,24 @@ export default function ScheduleTab({ trip, isAdmin: _isAdmin, onGoToBoard, onGo
   }
 
   function startEdit(s: Schedule) {
-    setForm({ date: s.date, place_name: s.place_name, address: s.address || '', time: s.time || '', memo: s.memo || '' })
+    setForm({
+      date: s.date,
+      place_name: s.place_name,
+      address: s.address || '',
+      time: s.time || '',
+      memo: s.memo || '',
+      participants: s.participants || '',
+    })
     setEditingId(s.id)
     setShowForm(true)
   }
 
   function resetForm() {
-    setForm({ date: trip.start_date || '', place_name: '', address: '', time: '', memo: '' })
+    setForm({ date: trip.start_date || '', place_name: '', address: '', time: '', memo: '', participants: '' })
     setEditingId(null)
     setShowForm(false)
   }
 
-  // 날짜별로 그룹화
   const grouped: Record<string, Schedule[]> = {}
   schedules.forEach(s => {
     if (!grouped[s.date]) grouped[s.date] = []
@@ -115,7 +119,6 @@ export default function ScheduleTab({ trip, isAdmin: _isAdmin, onGoToBoard, onGo
         </button>
       </div>
 
-      {/* 추가/수정 폼 */}
       {showForm && (
         <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
           <h3 className="font-medium text-slate-700">{editingId ? '일정 수정' : '새 일정'}</h3>
@@ -134,12 +137,20 @@ export default function ScheduleTab({ trip, isAdmin: _isAdmin, onGoToBoard, onGo
           <div>
             <label className="text-xs text-slate-500 mb-1 block">장소 이름 *</label>
             <input type="text" value={form.place_name} onChange={e => setForm(f => ({ ...f, place_name: e.target.value }))}
-              placeholder="예: 도톤보리" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+              placeholder="예: 도톤보리"
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
           </div>
           <div>
             <label className="text-xs text-slate-500 mb-1 block">주소 (선택)</label>
             <input type="text" value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
-              placeholder="예: 오사카시 주오구 도톤보리" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+              placeholder="예: 오사카시 주오구 도톤보리"
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          </div>
+          <div>
+            <label className="text-xs text-slate-500 mb-1 block">참여인원 (선택)</label>
+            <input type="text" value={form.participants} onChange={e => setForm(f => ({ ...f, participants: e.target.value }))}
+              placeholder="예: 홍길동, 김철수, 이영희"
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
           </div>
           <div>
             <label className="text-xs text-slate-500 mb-1 block">메모 (선택)</label>
@@ -148,17 +159,18 @@ export default function ScheduleTab({ trip, isAdmin: _isAdmin, onGoToBoard, onGo
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none" />
           </div>
           <div className="flex gap-2">
-            <button onClick={saveSchedule} className="flex-1 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium py-2 rounded-lg transition-colors">
+            <button onClick={saveSchedule}
+              className="flex-1 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium py-2 rounded-lg transition-colors">
               {editingId ? '수정 완료' : '추가'}
             </button>
-            <button onClick={resetForm} className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-medium py-2 rounded-lg transition-colors">
+            <button onClick={resetForm}
+              className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-medium py-2 rounded-lg transition-colors">
               취소
             </button>
           </div>
         </div>
       )}
 
-      {/* 날짜별 일정 목록 */}
       {sortedDates.length === 0 ? (
         <div className="text-center py-12 text-slate-400">
           <div className="text-3xl mb-2">📅</div>
@@ -184,24 +196,23 @@ export default function ScheduleTab({ trip, isAdmin: _isAdmin, onGoToBoard, onGo
                         <div className="flex items-center gap-2 flex-wrap">
                           <p className="font-medium text-slate-800">{s.place_name}</p>
                           {onGoToBoard && (
-                            <button
-                              onClick={() => onGoToBoard(s.id)}
-                              className="text-xs text-blue-500 bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-full transition-colors whitespace-nowrap"
-                            >
+                            <button onClick={() => onGoToBoard(s.id)}
+                              className="text-xs text-blue-500 bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-full transition-colors whitespace-nowrap">
                               준비 보드 →
                             </button>
                           )}
                           {onGoToAlbum && (
-                            <button
-                              onClick={() => onGoToAlbum(s.id)}
-                              className="text-xs text-purple-500 bg-purple-50 hover:bg-purple-100 px-2 py-0.5 rounded-full transition-colors whitespace-nowrap"
-                            >
+                            <button onClick={() => onGoToAlbum(s.id)}
+                              className="text-xs text-purple-500 bg-purple-50 hover:bg-purple-100 px-2 py-0.5 rounded-full transition-colors whitespace-nowrap">
                               앨범 →
                             </button>
                           )}
                         </div>
                         {s.time && <p className="text-xs text-slate-400 mt-0.5">🕐 {s.time}</p>}
                         {s.address && <p className="text-xs text-slate-400 mt-0.5">📍 {s.address}</p>}
+                        {s.participants && (
+                          <p className="text-xs text-slate-400 mt-0.5">👥 {s.participants}</p>
+                        )}
                         {s.memo && <p className="text-sm text-slate-500 mt-1 bg-slate-50 rounded-lg px-2 py-1">{s.memo}</p>}
                       </div>
                       <div className="flex gap-1 shrink-0">
