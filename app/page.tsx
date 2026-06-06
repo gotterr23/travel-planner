@@ -161,7 +161,19 @@ export default function HomePage() {
                         </p>
                       )}
                     </div>
-                    <span className="text-blue-400 text-lg shrink-0">→</span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={e => {
+                          e.stopPropagation()
+                          if (!confirm(`"${trip.title}" 여행을 삭제할까요?\n일정, 사진, 예산 등 모든 데이터가 삭제됩니다.`)) return
+                          supabase.from('trips').delete().eq('id', trip.id).then(() => loadTrips())
+                        }}
+                        className="text-slate-300 hover:text-red-400 transition-colors p-1"
+                      >
+                        🗑️
+                      </button>
+                      <span className="text-blue-400 text-lg">→</span>
+                    </div>
                   </div>
 
                   {/* 링크 */}
