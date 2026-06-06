@@ -35,8 +35,14 @@ export default function ScheduleTab({ trip, isAdmin: _isAdmin }: Props) {
       .select('*')
       .eq('trip_id', trip.id)
       .order('date', { ascending: true })
-      .order('order_index', { ascending: true })
-    setSchedules(data || [])
+    const sorted = (data || []).sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date)
+      if (a.time && b.time) return a.time.localeCompare(b.time)
+      if (a.time) return -1
+      if (b.time) return 1
+      return a.order_index - b.order_index
+    })
+    setSchedules(sorted)
     setLoading(false)
   }
 
