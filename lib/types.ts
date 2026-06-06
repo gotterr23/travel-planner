@@ -9,6 +9,7 @@ export interface Trip {
   cover_image_url: string | null
   admin_token: string
   member_token: string
+  board_categories: string[] | null
   settings: { budgetCategories?: Record<string, string> } | null
   created_at: string
 }
@@ -35,6 +36,7 @@ export interface ReferenceItem {
   url: string | null
   image_url: string | null
   memo: string | null
+  category: string | null
   schedule_id: string | null
   schedule_ids: string[]
   created_at: string
@@ -46,6 +48,17 @@ export interface Photo {
   image_url: string
   caption: string | null
   schedule_id: string | null
+  created_at: string
+}
+
+export interface ChecklistItem {
+  id: string
+  trip_id: string
+  schedule_id: string | null
+  place: string | null
+  time: string | null
+  title: string
+  note: string | null
   created_at: string
 }
 
