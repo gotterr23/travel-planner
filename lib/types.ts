@@ -52,6 +52,19 @@ export interface Photo {
   created_at: string
 }
 
+export interface ChecklistItem {
+  id: string
+  trip_id: string
+  category: string | null
+  place: string | null
+  time: string | null
+  item: string
+  note: string | null
+  checked: boolean
+  order_index: number
+  created_at: string
+}
+
 export interface BudgetItem {
   id: string
   trip_id: string
