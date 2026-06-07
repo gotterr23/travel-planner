@@ -10,7 +10,7 @@ export interface Trip {
   admin_token: string
   member_token: string
   board_categories: string[] | null
-  settings: { budgetCategories?: Record<string, string> } | null
+  settings: { budgetCategories?: Record<string, string>; hiddenScheduleCats?: string[] } | null
   created_at: string
 }
 
@@ -56,6 +56,7 @@ export interface ChecklistItem {
   id: string
   trip_id: string
   schedule_id: string | null
+  category: string | null
   place: string | null
   time: string | null
   title: string

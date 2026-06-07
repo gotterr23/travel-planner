@@ -15,13 +15,16 @@ const DEFAULT_CATS = ['숙소', '맛집', '관광지', '교통', '쇼핑', '기�
 const CAT_EMOJI: Record<string, string> = {
   숙소: '🏨', 맛집: '🍜', 관광지: '🏛️', 교통: '✈️', 쇼핑: '🛍️', 기타: '📌',
 }
-function catEmoji(name: string) { return CAT_EMOJI[name] ?? '📌' }
+function catEmoji(name: string) { return CAT_EMOJI[name] ?? '📍' }
 
 const ITEMS_PER_PAGE = 12
-const EMPTY_ITEM_FORM = { scheduleId: '', place: '', time: '', title: '', note: '' }
+const EMPTY_ITEM_FORM = { category: '', place: '', time: '', title: '', note: '' }
 
 export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Props) {
-  const [cats, setCats] = useState<string[]>(trip.board_categories ?? DEFAULT_CATS)
+  // 기본(고정) 카테고리 — board_categories
+  const [baseCats, setBaseCats] = useState<string[]>(trip.board_categories ?? DEFAULT_CATS)
+  // 숨긴 일정 카테고리 — settings.hiddenScheduleCats
+  const [hiddenSchedCats, setHiddenSchedCats] = useState<string[]>(trip.settings?.hiddenScheduleCats ?? [])
   const [newCatName, setNewCatName] = useState('')
 
   const [schedules, setSchedules] = useState<Schedule[]>([])
@@ -31,25 +34,25 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
 
   const [showCatManage, setShowCatManage] = useState(false)
 
+  // ★ 공통 카테고리 필터 (준비물·링크·사진 모두 적용)
+  const [filterCat, setFilterCat] = useState('전체')
+
   // 준비물
-  const [checklistFilter, setChecklistFilter] = useState('전체')
   const [checklistPage, setChecklistPage] = useState(0)
   const [showItemModal, setShowItemModal] = useState(false)
   const [editingItem, setEditingItem] = useState<ChecklistItem | null>(null)
   const [itemForm, setItemForm] = useState(EMPTY_ITEM_FORM)
 
   // 링크
-  const [linkFilter, setLinkFilter] = useState('전체')
   const [linkPage, setLinkPage] = useState(0)
   const [showLinkForm, setShowLinkForm] = useState(false)
-  const [linkCategory, setLinkCategory] = useState(cats[0] ?? '기타')
+  const [linkCategory, setLinkCategory] = useState('')
   const [linkForm, setLinkForm] = useState({ url: '', title: '', memo: '' })
 
   // 사진
-  const [imageFilter, setImageFilter] = useState('전체')
   const [imagePage, setImagePage] = useState(0)
   const [uploading, setUploading] = useState(false)
-  const [imageCategory, setImageCategory] = useState(cats[0] ?? '기타')
+  const [imageCategory, setImageCategory] = useState('')
   const [showImageCatPicker, setShowImageCatPicker] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -59,8 +62,13 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
 
   useEffect(() => { loadAll() }, [trip.id])
 
+  // 일정 카드의 "준비 보드" 버튼 → 해당 장소명 카테고리로 필터
   useEffect(() => {
-    if (focusScheduleId && !loading) onFocusHandled?.()
+    if (focusScheduleId && !loading) {
+      const sched = schedules.find(s => s.id === focusScheduleId)
+      if (sched) setFilterCat(sched.place_name)
+      onFocusHandled?.()
+    }
   }, [focusScheduleId, loading])
 
   async function loadAll() {
@@ -83,52 +91,95 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
     return schedules.find(s => s.id === scheduleId)?.place_name ?? ''
   }
 
-  // 카테고리 추가/삭제
+  // 준비물 항목의 카테고리 (category 우선, 없으면 일정명 하위호환)
+  function itemCat(item: ChecklistItem): string {
+    return item.category ?? getSchedLabel(item.schedule_id) ?? ''
+  }
+
+  // ── 통합 카테고리 목록 ──
+  const scheduleCats = schedules.map(s => s.place_name).filter(n => !hiddenSchedCats.includes(n))
+  const allCats = [...new Set([...baseCats, ...scheduleCats])]
+
+  // ── 기본 카테고리 추가/삭제 ──
   async function addCat() {
     const name = newCatName.trim()
-    if (!name || cats.includes(name)) return
-    const updated = [...cats, name]
+    if (!name || baseCats.includes(name)) return
+    const updated = [...baseCats, name]
     await supabase.from('trips').update({ board_categories: updated }).eq('id', trip.id)
-    setCats(updated)
+    setBaseCats(updated)
     setNewCatName('')
   }
 
-  async function deleteCat(cat: string) {
-    const updated = cats.filter(c => c !== cat)
+  async function deleteBaseCat(cat: string) {
+    const updated = baseCats.filter(c => c !== cat)
     await supabase.from('trips').update({ board_categories: updated }).eq('id', trip.id)
-    setCats(updated)
+    setBaseCats(updated)
+    if (filterCat === cat) setFilterCat('전체')
   }
 
-  // 준비물
-  function openAddItem() { setEditingItem(null); setItemForm(EMPTY_ITEM_FORM); setShowItemModal(true) }
+  // 일정 카테고리 숨김 (일정 자체는 삭제하지 않음)
+  async function hideScheduleCat(cat: string) {
+    const updated = [...hiddenSchedCats, cat]
+    await supabase.from('trips')
+      .update({ settings: { ...(trip.settings ?? {}), hiddenScheduleCats: updated } })
+      .eq('id', trip.id)
+    setHiddenSchedCats(updated)
+    if (filterCat === cat) setFilterCat('전체')
+  }
+
+  // 숨긴 일정 카테고리 다시 표시
+  async function unhideScheduleCat(cat: string) {
+    const updated = hiddenSchedCats.filter(c => c !== cat)
+    await supabase.from('trips')
+      .update({ settings: { ...(trip.settings ?? {}), hiddenScheduleCats: updated } })
+      .eq('id', trip.id)
+    setHiddenSchedCats(updated)
+  }
+
+  // ── 준비물 ──
+  function openAddItem() {
+    setEditingItem(null)
+    setItemForm({ ...EMPTY_ITEM_FORM, category: filterCat !== '전체' ? filterCat : '' })
+    setShowItemModal(true)
+  }
   function openEditItem(item: ChecklistItem) {
     setEditingItem(item)
-    setItemForm({ scheduleId: item.schedule_id ?? '', place: item.place ?? '', time: item.time ?? '', title: item.title, note: item.note ?? '' })
+    setItemForm({ category: itemCat(item), place: item.place ?? '', time: item.time ?? '', title: item.title, note: item.note ?? '' })
     setShowItemModal(true)
   }
   async function saveItem() {
     if (!itemForm.title.trim()) return
-    const payload = {
+    // 카테고리가 일정명과 일치하면 schedule_id도 함께 저장(주소 연동 유지)
+    const matched = schedules.find(s => s.place_name === itemForm.category)
+    const base = {
       trip_id: trip.id,
-      schedule_id: itemForm.scheduleId || null,
+      schedule_id: matched?.id ?? null,
       place: itemForm.place.trim() || null,
       time: itemForm.time || null,
       title: itemForm.title.trim(),
       note: itemForm.note.trim() || null,
     }
-    if (editingItem) {
-      await supabase.from('checklist_items').update(payload).eq('id', editingItem.id)
-    } else {
-      await supabase.from('checklist_items').insert(payload)
+    const payload = { ...base, category: itemForm.category || null }
+
+    async function run(p: Record<string, unknown>) {
+      return editingItem
+        ? supabase.from('checklist_items').update(p).eq('id', editingItem.id)
+        : supabase.from('checklist_items').insert(p)
     }
-    setShowItemModal(false); loadAll()
+
+    let { error } = await run(payload)
+    // category 컬럼이 아직 없으면 컬럼 없이 재시도(일정 연동만 유지)
+    if (error && (error.code === 'PGRST204' || error.message?.includes('category'))) {
+      ;({ error } = await run(base))
+    }
+    if (!error) { setShowItemModal(false); loadAll() }
   }
   async function deleteItem(id: string) {
     if (!confirm('삭제할까요?')) return
     await supabase.from('checklist_items').delete().eq('id', id); loadAll()
   }
 
-  // 링크
+  // ── 링크 ──
   async function addLink() {
     if (!linkForm.url.trim()) return
     let url = linkForm.url.trim()
@@ -137,14 +188,14 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
       trip_id: trip.id, type: 'link',
       title: linkForm.title.trim() || url, url,
       memo: linkForm.memo.trim() || null,
-      category: linkCategory,
+      category: linkCategory || null,
       schedule_id: null, schedule_ids: [],
     })
     setLinkForm({ url: '', title: '', memo: '' })
     setShowLinkForm(false); setLinkPage(0); loadAll()
   }
 
-  // 사진
+  // ── 사진 ──
   async function uploadImage(file: File, category: string) {
     setUploading(true)
     const ext = file.name.split('.').pop()
@@ -155,7 +206,7 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
       await supabase.from('reference_items').insert({
         trip_id: trip.id, type: 'image',
         image_url: urlData.publicUrl, title: file.name,
-        category, schedule_id: null, schedule_ids: [],
+        category: category || null, schedule_id: null, schedule_ids: [],
       })
       setImagePage(0); loadAll()
     }
@@ -169,35 +220,33 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
 
   async function saveRefCat() {
     if (!editingRef) return
-    await supabase.from('reference_items').update({ category: editingRefCat }).eq('id', editingRef.id)
+    await supabase.from('reference_items').update({ category: editingRefCat || null }).eq('id', editingRef.id)
     setEditingRef(null); loadAll()
   }
 
   const links = refItems.filter(i => i.type === 'link')
   const images = refItems.filter(i => i.type === 'image')
 
-  // 준비물 필터 + 페이지
-  const checklistCats = [...new Set(checklistItems.map(i => getSchedLabel(i.schedule_id)).filter(Boolean))]
-  const filteredChecklist = checklistFilter === '전체' ? checklistItems : checklistItems.filter(i => getSchedLabel(i.schedule_id) === checklistFilter)
+  // ── 공통 필터 적용 ──
+  const filteredChecklist = filterCat === '전체' ? checklistItems : checklistItems.filter(i => itemCat(i) === filterCat)
+  const filteredLinks = filterCat === '전체' ? links : links.filter(i => (i.category ?? '') === filterCat)
+  const filteredImages = filterCat === '전체' ? images : images.filter(i => (i.category ?? '') === filterCat)
+
   const totalChecklistPages = Math.ceil(filteredChecklist.length / ITEMS_PER_PAGE)
   const pagedChecklist = filteredChecklist.slice(checklistPage * ITEMS_PER_PAGE, (checklistPage + 1) * ITEMS_PER_PAGE)
 
-  // 링크 필터 + 페이지
-  const linkCats = [...new Set(links.map(i => i.category).filter(Boolean))] as string[]
-  const filteredLinks = linkFilter === '전체' ? links : links.filter(i => i.category === linkFilter)
   const totalLinkPages = Math.ceil(filteredLinks.length / ITEMS_PER_PAGE)
   const pagedLinks = filteredLinks.slice(linkPage * ITEMS_PER_PAGE, (linkPage + 1) * ITEMS_PER_PAGE)
 
-  // 사진 필터 + 페이지
-  const imageCats = [...new Set(images.map(i => i.category).filter(Boolean))] as string[]
-  const filteredImages = imageFilter === '전체' ? images : images.filter(i => i.category === imageFilter)
   const totalImagePages = Math.ceil(filteredImages.length / ITEMS_PER_PAGE)
   const pagedImages = filteredImages.slice(imagePage * ITEMS_PER_PAGE, (imagePage + 1) * ITEMS_PER_PAGE)
+
+  function resetPages() { setChecklistPage(0); setLinkPage(0); setImagePage(0) }
 
   if (loading) return <div className="text-center py-12 text-slate-400">불러오는 중...</div>
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
 
       {/* 헤더 */}
       <div className="flex items-center justify-between">
@@ -210,23 +259,24 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
         </button>
       </div>
 
+      {/* ★ 통합 카테고리 필터 (준비물·링크·사진 공통) */}
+      <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+        {['전체', ...allCats].map(cat => (
+          <button key={cat} onClick={() => { setFilterCat(cat); resetPages() }}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors shrink-0 ${
+              filterCat === cat ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}>
+            {cat === '전체' ? '전체' : `${catEmoji(cat)} ${cat}`}
+          </button>
+        ))}
+      </div>
+
       {/* ── 섹션 1: 준비물 ── */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
           <span className="font-semibold text-slate-700 text-sm">🎒 준비물</span>
           <button onClick={openAddItem} className="text-sm font-semibold text-blue-500 hover:text-blue-600">+ 추가</button>
         </div>
-
-        {checklistCats.length > 0 && (
-          <div className="flex gap-2 overflow-x-auto px-4 py-2 border-b border-slate-100 no-scrollbar">
-            {['전체', ...checklistCats].map(cat => (
-              <button key={cat} onClick={() => { setChecklistFilter(cat); setChecklistPage(0) }}
-                className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors shrink-0 ${
-                  checklistFilter === cat ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}>{cat}</button>
-            ))}
-          </div>
-        )}
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -247,23 +297,26 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
                     + 추가 버튼으로 준비물을 입력해보세요
                   </td>
                 </tr>
-              ) : pagedChecklist.map(item => (
-                <tr key={item.id} onClick={() => openEditItem(item)} className="hover:bg-slate-50 cursor-pointer group">
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    {item.schedule_id
-                      ? <span className="text-xs bg-blue-50 text-blue-500 px-2 py-0.5 rounded-full">{getSchedLabel(item.schedule_id)}</span>
-                      : <span className="text-xs text-slate-300">-</span>}
-                  </td>
-                  <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{item.place || '-'}</td>
-                  <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{item.time || '-'}</td>
-                  <td className="px-4 py-3 font-medium text-slate-800">{item.title}</td>
-                  <td className="px-4 py-3 text-slate-500 max-w-32 truncate">{item.note || '-'}</td>
-                  <td className="px-2 py-3">
-                    <button onClick={e => { e.stopPropagation(); deleteItem(item.id) }}
-                      className="text-slate-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                  </td>
-                </tr>
-              ))}
+              ) : pagedChecklist.map(item => {
+                const cat = itemCat(item)
+                return (
+                  <tr key={item.id} onClick={() => openEditItem(item)} className="hover:bg-slate-50 cursor-pointer group">
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      {cat
+                        ? <span className="text-xs bg-blue-50 text-blue-500 px-2 py-0.5 rounded-full">{catEmoji(cat)} {cat}</span>
+                        : <span className="text-xs text-slate-300">-</span>}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{item.place || '-'}</td>
+                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{item.time || '-'}</td>
+                    <td className="px-4 py-3 font-medium text-slate-800">{item.title}</td>
+                    <td className="px-4 py-3 text-slate-500 max-w-32 truncate">{item.note || '-'}</td>
+                    <td className="px-2 py-3">
+                      <button onClick={e => { e.stopPropagation(); deleteItem(item.id) }}
+                        className="text-slate-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -279,16 +332,16 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
         )}
       </div>
 
-      {/* ── 섹션 2 & 3: 링크 + 사진 버튼 ── */}
+      {/* ── 링크 + 사진 추가 버튼 ── */}
       <div className="grid grid-cols-2 gap-3">
         <button
-          onClick={() => { setShowLinkForm(v => !v); setLinkCategory(cats[0] ?? '기타') }}
+          onClick={() => { setShowLinkForm(v => !v); setLinkCategory(filterCat !== '전체' ? filterCat : (allCats[0] ?? '')) }}
           className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-medium py-3 rounded-xl flex items-center justify-center gap-2 transition-colors"
         >
           🔗 링크 추가
         </button>
         <button
-          onClick={() => setShowImageCatPicker(true)}
+          onClick={() => { setImageCategory(filterCat !== '전체' ? filterCat : (allCats[0] ?? '')); setShowImageCatPicker(true) }}
           disabled={uploading}
           className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-medium py-3 rounded-xl flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
         >
@@ -308,7 +361,7 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
         <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
           <h3 className="font-medium text-slate-700 text-sm">링크 추가</h3>
           <div className="flex flex-wrap gap-2">
-            {cats.map(cat => (
+            {allCats.map(cat => (
               <button key={cat} onClick={() => setLinkCategory(cat)}
                 className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
                   linkCategory === cat ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
@@ -336,20 +389,9 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
       )}
 
       {/* ── 링크 목록 ── */}
-      {links.length > 0 && (
+      {filteredLinks.length > 0 && (
         <div className="space-y-2">
-          {linkCats.length > 0 && (
-            <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-              {['전체', ...linkCats].map(cat => (
-                <button key={cat} onClick={() => { setLinkFilter(cat); setLinkPage(0) }}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors shrink-0 ${
-                    linkFilter === cat ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}>
-                  {cat === '전체' ? '전체' : `${catEmoji(cat)} ${cat}`}
-                </button>
-              ))}
-            </div>
-          )}
+          <p className="text-xs font-semibold text-slate-400 px-1">🔗 링크</p>
           {pagedLinks.map(item => (
             <div key={item.id} className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex items-center gap-3 group">
               <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center text-sm shrink-0">🔗</div>
@@ -360,9 +402,9 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
                 </a>
                 {item.memo && <p className="text-xs text-slate-400 mt-0.5">{item.memo}</p>}
               </div>
-              <button onClick={() => { setEditingRef(item); setEditingRefCat(item.category ?? '기타') }}
+              <button onClick={() => { setEditingRef(item); setEditingRefCat(item.category ?? '') }}
                 className="text-xs bg-slate-100 text-slate-500 px-2 py-1 rounded-full hover:bg-blue-50 hover:text-blue-500 transition-colors shrink-0">
-                {catEmoji(item.category ?? '기타')} {item.category ?? '기타'}
+                {item.category ? `${catEmoji(item.category)} ${item.category}` : '분류'}
               </button>
               <button onClick={() => deleteRef(item.id)}
                 className="text-slate-300 hover:text-red-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity shrink-0">✕</button>
@@ -381,28 +423,17 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
       )}
 
       {/* ── 사진 목록 ── */}
-      {images.length > 0 && (
+      {filteredImages.length > 0 && (
         <div className="space-y-2">
-          {imageCats.length > 0 && (
-            <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-              {['전체', ...imageCats].map(cat => (
-                <button key={cat} onClick={() => { setImageFilter(cat); setImagePage(0) }}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors shrink-0 ${
-                    imageFilter === cat ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}>
-                  {cat === '전체' ? '전체' : `${catEmoji(cat)} ${cat}`}
-                </button>
-              ))}
-            </div>
-          )}
+          <p className="text-xs font-semibold text-slate-400 px-1">📷 사진</p>
           <div className="grid grid-cols-3 gap-2">
             {pagedImages.map(item => (
               <div key={item.id} className="relative group rounded-xl overflow-hidden aspect-square bg-slate-100">
                 <img src={item.image_url!} alt="" className="w-full h-full object-cover" />
                 <div className="absolute bottom-0 left-0 right-0 px-1.5 pb-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => { setEditingRef(item); setEditingRefCat(item.category ?? '기타') }}
+                  <button onClick={() => { setEditingRef(item); setEditingRefCat(item.category ?? '') }}
                     className="w-full text-xs bg-black/60 text-white rounded-lg px-1 py-1 truncate">
-                    {catEmoji(item.category ?? '기타')} {item.category ?? '기타'}
+                    {item.category ? `${catEmoji(item.category)} ${item.category}` : '분류'}
                   </button>
                 </div>
                 <button onClick={() => deleteRef(item.id)}
@@ -423,10 +454,12 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
       )}
 
       {/* 링크·사진 모두 없을 때 빈 상태 */}
-      {links.length === 0 && images.length === 0 && !showLinkForm && (
+      {filteredLinks.length === 0 && filteredImages.length === 0 && !showLinkForm && (
         <div className="text-center py-10 text-slate-400">
           <div className="text-4xl mb-3">📌</div>
-          <p className="text-sm font-medium">링크나 사진을 추가해보세요!</p>
+          <p className="text-sm font-medium">
+            {filterCat === '전체' ? '링크나 사진을 추가해보세요!' : `'${filterCat}' 카테고리에 링크·사진이 없어요`}
+          </p>
         </div>
       )}
 
@@ -452,15 +485,51 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
                 추가
               </button>
             </div>
-            <div className="space-y-2 overflow-y-auto flex-1">
-              {cats.map(cat => (
-                <div key={cat} className="flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-50 border border-slate-100">
-                  <span className="text-base">{catEmoji(cat)}</span>
-                  <span className="flex-1 text-sm font-medium text-slate-700">{cat}</span>
-                  <button onClick={() => deleteCat(cat)}
-                    className="text-sm text-slate-400 hover:text-red-500 transition-colors">삭제</button>
+
+            <div className="space-y-3 overflow-y-auto flex-1">
+              {/* 기본 카테고리 */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-slate-400">기본 카테고리</p>
+                {baseCats.map(cat => (
+                  <div key={cat} className="flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-50 border border-slate-100">
+                    <span className="text-base">{catEmoji(cat)}</span>
+                    <span className="flex-1 text-sm font-medium text-slate-700">{cat}</span>
+                    <button onClick={() => deleteBaseCat(cat)}
+                      className="text-sm text-slate-400 hover:text-red-500 transition-colors">삭제</button>
+                  </div>
+                ))}
+              </div>
+
+              {/* 일정 연동 카테고리 */}
+              {scheduleCats.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-slate-400">일정 연동 카테고리</p>
+                  {scheduleCats.map(cat => (
+                    <div key={cat} className="flex items-center gap-3 px-4 py-3 rounded-xl bg-blue-50/50 border border-blue-100">
+                      <span className="text-base">📍</span>
+                      <span className="flex-1 text-sm font-medium text-slate-700">{cat}</span>
+                      <button onClick={() => hideScheduleCat(cat)}
+                        className="text-sm text-slate-400 hover:text-red-500 transition-colors">삭제</button>
+                    </div>
+                  ))}
+                  <p className="text-[11px] text-slate-400 px-1">일정 카테고리를 삭제해도 일정 내용은 유지됩니다</p>
                 </div>
-              ))}
+              )}
+
+              {/* 숨긴 일정 카테고리 복원 */}
+              {hiddenSchedCats.filter(c => schedules.some(s => s.place_name === c)).length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-slate-400">숨긴 일정 카테고리</p>
+                  {hiddenSchedCats.filter(c => schedules.some(s => s.place_name === c)).map(cat => (
+                    <div key={cat} className="flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-50 border border-slate-100 opacity-70">
+                      <span className="text-base">🙈</span>
+                      <span className="flex-1 text-sm font-medium text-slate-500 line-through">{cat}</span>
+                      <button onClick={() => unhideScheduleCat(cat)}
+                        className="text-sm text-blue-400 hover:text-blue-600 transition-colors">복원</button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -475,7 +544,7 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
               <button onClick={() => setShowImageCatPicker(false)} className="text-slate-400 text-xl">✕</button>
             </div>
             <div className="flex flex-wrap gap-2">
-              {cats.map(cat => (
+              {allCats.map(cat => (
                 <button key={cat} onClick={() => setImageCategory(cat)}
                   className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
                     imageCategory === cat ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
@@ -501,24 +570,22 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
               <button onClick={() => setShowItemModal(false)} className="text-slate-400 text-xl">✕</button>
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-500 mb-1 block">카테고리 (일정 연동)</label>
+              <label className="text-xs font-medium text-slate-500 mb-1 block">카테고리</label>
               <select
-                value={itemForm.scheduleId}
+                value={itemForm.category}
                 onChange={e => {
-                  const id = e.target.value
-                  const sched = schedules.find(s => s.id === id)
+                  const cat = e.target.value
+                  const sched = schedules.find(s => s.place_name === cat)
                   setItemForm(f => ({
                     ...f,
-                    scheduleId: id,
-                    place: id && sched?.address ? sched.address : f.place,
+                    category: cat,
+                    place: sched?.address ? sched.address : f.place,
                   }))
                 }}
                 className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white">
                 <option value="">분류 없음</option>
-                {schedules.map(s => (
-                  <option key={s.id} value={s.id}>
-                    📍 {s.place_name}{s.address ? ` — ${s.address}` : ''}
-                  </option>
+                {allCats.map(cat => (
+                  <option key={cat} value={cat}>{catEmoji(cat)} {cat}</option>
                 ))}
               </select>
             </div>
@@ -568,7 +635,7 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
               <button onClick={() => setEditingRef(null)} className="text-slate-400 text-xl">✕</button>
             </div>
             <div className="flex flex-wrap gap-2">
-              {cats.map(cat => (
+              {allCats.map(cat => (
                 <button key={cat} onClick={() => setEditingRefCat(cat)}
                   className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
                     editingRefCat === cat ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'

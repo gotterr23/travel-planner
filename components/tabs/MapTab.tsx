@@ -13,19 +13,17 @@ declare global {
     kakao: {
       maps: {
         load: (callback: () => void) => void
-        Map: new (container: HTMLElement, options: { center: { lat: number; lng: number }; level: number }) => KakaoMap
+        Map: new (container: HTMLElement, options: { center: KakaoLatLng; level: number }) => KakaoMap
         LatLng: new (lat: number, lng: number) => KakaoLatLng
+        LatLngBounds: new () => KakaoLatLngBounds
         Marker: new (options: { position: KakaoLatLng; map?: KakaoMap }) => KakaoMarker
-        InfoWindow: new (options: { content: string }) => KakaoInfoWindow
+        CustomOverlay: new (options: { position: KakaoLatLng; content: string; yAnchor?: number; map?: KakaoMap }) => KakaoCustomOverlay
         Polyline: new (options: { path: KakaoLatLng[]; strokeWeight: number; strokeColor: string; strokeOpacity: number; strokeStyle: string }) => KakaoPolyline
         services: {
           Geocoder: new () => {
             addressSearch: (address: string, callback: (result: Array<{ x: string; y: string }>, status: string) => void) => void
           }
           Status: { OK: string }
-          Places: new () => {
-            keywordSearch: (keyword: string, callback: (result: Array<{ place_name: string; address_name: string; x: string; y: string }>, status: string) => void) => void
-          }
         }
       }
     }
@@ -34,26 +32,21 @@ declare global {
 
 interface KakaoMap {
   setCenter: (latlng: KakaoLatLng) => void
-  setBounds: (bounds: KakaoBounds) => void
+  setBounds: (bounds: KakaoLatLngBounds) => void
 }
-
 interface KakaoLatLng {
   getLat: () => number
   getLng: () => number
 }
-
-interface KakaoBounds {
+interface KakaoLatLngBounds {
   extend: (latlng: KakaoLatLng) => void
 }
-
 interface KakaoMarker {
   setMap: (map: KakaoMap | null) => void
 }
-
-interface KakaoInfoWindow {
-  open: (map: KakaoMap, marker: KakaoMarker) => void
+interface KakaoCustomOverlay {
+  setMap: (map: KakaoMap | null) => void
 }
-
 interface KakaoPolyline {
   setMap: (map: KakaoMap | null) => void
 }
@@ -65,6 +58,7 @@ export default function MapTab({ trip }: Props) {
   const [mapError, setMapError] = useState(false)
   const [selectedDate, setSelectedDate] = useState<string>('all')
   const mapInstanceRef = useRef<KakaoMap | null>(null)
+  const geoCacheRef = useRef<Record<string, { lat: number; lng: number }>>({})
 
   const apiKey = process.env.NEXT_PUBLIC_KAKAO_MAP_KEY
 
@@ -103,10 +97,7 @@ export default function MapTab({ trip }: Props) {
       .select('*')
       .eq('trip_id', trip.id)
       .order('date', { ascending: true })
-      .order('time', { ascending: true, nullsFirst: false })
-      .order('order_index', { ascending: true })
 
-    // 날짜 → 시간(null은 마지막) → order_index 순으로 클라이언트에서도 보장
     const sorted = [...(data || [])].sort((a, b) => {
       if (a.date !== b.date) return a.date.localeCompare(b.date)
       if (a.time && b.time) return a.time.localeCompare(b.time)
@@ -117,49 +108,82 @@ export default function MapTab({ trip }: Props) {
     setSchedules(sorted)
   }
 
-  function initMap() {
+  // 주소 → 좌표 변환 (캐시 사용)
+  function geocode(address: string): Promise<{ lat: number; lng: number } | null> {
+    return new Promise((resolve) => {
+      if (geoCacheRef.current[address]) {
+        resolve(geoCacheRef.current[address])
+        return
+      }
+      try {
+        const geocoder = new window.kakao.maps.services.Geocoder()
+        geocoder.addressSearch(address, (result, status) => {
+          if (status === window.kakao.maps.services.Status.OK && result[0]) {
+            const coord = { lat: parseFloat(result[0].y), lng: parseFloat(result[0].x) }
+            geoCacheRef.current[address] = coord
+            resolve(coord)
+          } else {
+            resolve(null)
+          }
+        })
+      } catch {
+        resolve(null)
+      }
+    })
+  }
+
+  async function initMap() {
     try {
-    const filtered = selectedDate === 'all'
-      ? schedules.filter(s => s.latitude && s.longitude)
-      : schedules.filter(s => s.date === selectedDate && s.latitude && s.longitude)
+      if (!mapRef.current) return
 
-    if (!mapRef.current) return
+      const target = selectedDate === 'all'
+        ? schedules
+        : schedules.filter(s => s.date === selectedDate)
 
-    const center = filtered.length > 0
-      ? { lat: filtered[0].latitude!, lng: filtered[0].longitude! }
-      : { lat: 37.5665, lng: 126.9780 }
+      // 각 일정의 좌표 확보 (저장된 좌표 우선, 없으면 주소로 지오코딩)
+      const points: { schedule: Schedule; lat: number; lng: number }[] = []
+      for (const s of target) {
+        if (s.latitude && s.longitude) {
+          points.push({ schedule: s, lat: s.latitude, lng: s.longitude })
+        } else if (s.address) {
+          const coord = await geocode(s.address)
+          if (coord) points.push({ schedule: s, lat: coord.lat, lng: coord.lng })
+        }
+      }
 
-    const map = new window.kakao.maps.Map(mapRef.current, {
-      center,
-      level: 7,
-    })
-    mapInstanceRef.current = map
+      const center = points.length > 0
+        ? new window.kakao.maps.LatLng(points[0].lat, points[0].lng)
+        : new window.kakao.maps.LatLng(37.5665, 126.9780)
 
-    if (filtered.length === 0) return
+      const map = new window.kakao.maps.Map(mapRef.current, { center, level: 9 })
+      mapInstanceRef.current = map
 
-    const bounds = { positions: [] as KakaoLatLng[] } as { positions: KakaoLatLng[] & { extend?: (l: KakaoLatLng) => void } }
+      if (points.length === 0) return
 
-    filtered.forEach((s, idx) => {
-      const pos = new window.kakao.maps.LatLng(s.latitude!, s.longitude!)
-      const marker = new window.kakao.maps.Marker({ position: pos, map })
-      const infoContent = `<div style="padding:6px 10px;font-size:13px;font-weight:600;color:#1e293b;">${idx + 1}. ${s.place_name}</div>`
-      const info = new window.kakao.maps.InfoWindow({ content: infoContent })
-      info.open(map, marker)
-      bounds.positions.push(pos)
-    })
+      const bounds = new window.kakao.maps.LatLngBounds()
 
-    // 경로 연결 (직선)
-    if (filtered.length > 1) {
-      const path = filtered.map(s => new window.kakao.maps.LatLng(s.latitude!, s.longitude!))
-      const polyline = new window.kakao.maps.Polyline({
-        path,
-        strokeWeight: 3,
-        strokeColor: '#3b82f6',
-        strokeOpacity: 0.8,
-        strokeStyle: 'solid',
+      points.forEach((p, idx) => {
+        const pos = new window.kakao.maps.LatLng(p.lat, p.lng)
+        new window.kakao.maps.Marker({ position: pos, map })
+        const content = `<div style="padding:4px 8px;background:#fff;border:1px solid #3b82f6;border-radius:9999px;font-size:12px;font-weight:700;color:#1e293b;box-shadow:0 1px 3px rgba(0,0,0,0.15);white-space:nowrap;">${idx + 1}. ${p.schedule.place_name}</div>`
+        const overlay = new window.kakao.maps.CustomOverlay({ position: pos, content, yAnchor: 2.2 })
+        overlay.setMap(map)
+        bounds.extend(pos)
       })
-      polyline.setMap(map)
-    }
+
+      // 경로 연결 (직선)
+      if (points.length > 1) {
+        const path = points.map(p => new window.kakao.maps.LatLng(p.lat, p.lng))
+        const polyline = new window.kakao.maps.Polyline({
+          path,
+          strokeWeight: 3,
+          strokeColor: '#3b82f6',
+          strokeOpacity: 0.8,
+          strokeStyle: 'solid',
+        })
+        polyline.setMap(map)
+        map.setBounds(bounds)
+      }
     } catch {
       setMapError(true)
     }
@@ -186,7 +210,7 @@ export default function MapTab({ trip }: Props) {
           <p className="font-semibold text-red-700 text-sm">🗺️ 지도를 불러올 수 없어요</p>
           <p className="text-red-600 text-xs leading-relaxed">
             카카오맵 API 키에 현재 사이트 주소가 등록되지 않아 발생하는 오류입니다.<br />
-            <strong>해결 방법:</strong> kakao developers.kakao.com → 내 애플리케이션 → 앱 설정 → 플랫폼 → Web → 사이트 도메인에
+            <strong>해결 방법:</strong> developers.kakao.com → 내 애플리케이션 → 앱 설정 → 플랫폼 키 → JavaScript SDK 도메인에
             아래 주소를 추가해주세요
           </p>
           <p className="text-xs bg-red-100 text-red-700 px-3 py-2 rounded-lg font-mono break-all">
@@ -231,7 +255,7 @@ export default function MapTab({ trip }: Props) {
       {/* 장소 목록 */}
       <ScheduleList schedules={selectedDate === 'all' ? schedules : schedules.filter(s => s.date === selectedDate)} />
 
-      {schedules.filter(s => !s.latitude).length > 0 && (
+      {schedules.filter(s => !s.address).length > 0 && (
         <p className="text-xs text-slate-400 text-center">
           💡 일정 탭에서 주소를 입력하면 지도에 표시돼요
         </p>
