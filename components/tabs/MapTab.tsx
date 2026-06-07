@@ -52,6 +52,19 @@ interface KakaoPolyline {
   setMap: (map: KakaoMap | null) => void
 }
 
+// 초 → "1시간 20분" 형식
+function formatDuration(sec: number): string {
+  const m = Math.round(sec / 60)
+  if (m < 1) return '1분 미만'
+  if (m < 60) return `${m}분`
+  const h = Math.floor(m / 60)
+  const rest = m % 60
+  return rest > 0 ? `${h}시간 ${rest}분` : `${h}시간`
+}
+
+// 구간(한 지점에서 다음 지점까지) 정보
+interface RouteLeg { fromId: string; toId: string; duration: number; distance: number }
+
 export default function MapTab({ trip }: Props) {
   const mapRef = useRef<HTMLDivElement>(null)
   const [schedules, setSchedules] = useState<Schedule[]>([])
@@ -62,9 +75,17 @@ export default function MapTab({ trip }: Props) {
   const geoCacheRef = useRef<Record<string, { lat: number; lng: number }>>({})
   // 일정 id → 좌표 (카드 클릭 시 해당 위치로 이동)
   const coordsRef = useRef<Record<string, { lat: number; lng: number }>>({})
-  const [highlightedId, setHighlightedId] = useState<string | null>(null)
+  // 선택된 카드 (구간 시간 표시 + 강조)
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
   // 자동차 경로 요약 (카카오모빌리티). null이면 직선 표시 중
   const [routeInfo, setRouteInfo] = useState<{ duration: number; distance: number } | null>(null)
+  // 구간별 소요시간
+  const [routeLegs, setRouteLegs] = useState<RouteLeg[]>([])
+  // 상단 배지 클릭 시 구간 코스 펼침
+  const [showLegs, setShowLegs] = useState(false)
+  // 경로선·전체영역 참조 (확대 시 경로 숨김 / 복원)
+  const polylineRef = useRef<KakaoPolyline | null>(null)
+  const boundsRef = useRef<KakaoLatLngBounds | null>(null)
 
   const apiKey = process.env.NEXT_PUBLIC_KAKAO_MAP_KEY
 
@@ -96,6 +117,9 @@ export default function MapTab({ trip }: Props) {
     if (!mapLoaded || !mapRef.current || schedules.length === 0) return
     initMap()
   }, [mapLoaded, schedules, selectedDate])
+
+  // 날짜 전환 시 펼침·선택 초기화
+  useEffect(() => { setShowLegs(false); setSelectedCardId(null) }, [selectedDate])
 
   async function loadSchedules() {
     const { data } = await supabase
@@ -170,6 +194,7 @@ export default function MapTab({ trip }: Props) {
       if (points.length === 0) return
 
       const bounds = new window.kakao.maps.LatLngBounds()
+      boundsRef.current = bounds
 
       points.forEach((p, idx) => {
         const pos = new window.kakao.maps.LatLng(p.lat, p.lng)
@@ -181,6 +206,8 @@ export default function MapTab({ trip }: Props) {
       })
 
       // 경로 연결 — 자동차 실제 도로 경로(카카오모빌리티) 우선, 실패 시 직선
+      polylineRef.current = null
+      setRouteLegs([])
       if (points.length > 1) {
         let drawnByCar = false
         try {
@@ -193,10 +220,21 @@ export default function MapTab({ trip }: Props) {
             const data = await res.json()
             if (Array.isArray(data.path) && data.path.length > 1) {
               const path = data.path.map((c: { lat: number; lng: number }) => new window.kakao.maps.LatLng(c.lat, c.lng))
-              new window.kakao.maps.Polyline({
+              const polyline = new window.kakao.maps.Polyline({
                 path, strokeWeight: 5, strokeColor: '#3b82f6', strokeOpacity: 0.85, strokeStyle: 'solid',
-              }).setMap(map)
+              })
+              polyline.setMap(map)
+              polylineRef.current = polyline
               setRouteInfo({ duration: data.duration, distance: data.distance })
+              // 구간(legs)을 일정 쌍과 매핑
+              if (Array.isArray(data.legs) && data.legs.length === points.length - 1) {
+                setRouteLegs(data.legs.map((leg: { duration: number; distance: number }, i: number) => ({
+                  fromId: points[i].schedule.id,
+                  toId: points[i + 1].schedule.id,
+                  duration: leg.duration,
+                  distance: leg.distance,
+                })))
+              }
               drawnByCar = true
             }
           }
@@ -205,9 +243,11 @@ export default function MapTab({ trip }: Props) {
         if (!drawnByCar) {
           // 직선 fallback (키 미설정·경로 없음 등)
           const path = points.map(p => new window.kakao.maps.LatLng(p.lat, p.lng))
-          new window.kakao.maps.Polyline({
+          const polyline = new window.kakao.maps.Polyline({
             path, strokeWeight: 3, strokeColor: '#94a3b8', strokeOpacity: 0.7, strokeStyle: 'shortdash',
-          }).setMap(map)
+          })
+          polyline.setMap(map)
+          polylineRef.current = polyline
           setRouteInfo(null)
         }
         map.setBounds(bounds)
@@ -219,15 +259,7 @@ export default function MapTab({ trip }: Props) {
     }
   }
 
-  function formatDuration(sec: number): string {
-    const m = Math.round(sec / 60)
-    if (m < 60) return `${m}분`
-    const h = Math.floor(m / 60)
-    const rest = m % 60
-    return rest > 0 ? `${h}시간 ${rest}분` : `${h}시간`
-  }
-
-  // 위치 카드 클릭 → 지도에서 해당 위치로 확대·이동
+  // 위치 카드 클릭 → 지도에서 해당 위치로 확대·이동 (경로선은 숨김)
   async function focusLocation(s: Schedule) {
     const map = mapInstanceRef.current
     if (!map || !window.kakao?.maps) return
@@ -237,11 +269,30 @@ export default function MapTab({ trip }: Props) {
       if (g) { c = g; coordsRef.current[s.id] = g }
     }
     if (!c) return
+    // 확대 시 경로선 숨김
+    polylineRef.current?.setMap(null)
+    setShowLegs(false)
     map.setCenter(new window.kakao.maps.LatLng(c.lat, c.lng))
     map.setLevel(3)
-    setHighlightedId(s.id)
-    setTimeout(() => setHighlightedId(null), 2000)
+    setSelectedCardId(s.id)
     mapRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  // 전체 경로 보기 (경로선 복원 + 전체 영역)
+  function showFullRoute() {
+    const map = mapInstanceRef.current
+    if (!map) return
+    polylineRef.current?.setMap(map)
+    if (boundsRef.current) map.setBounds(boundsRef.current)
+    setSelectedCardId(null)
+  }
+
+  // 일정 id → place_name
+  function placeName(id: string) {
+    return schedules.find(s => s.id === id)?.place_name ?? ''
+  }
+  function placeAddr(id: string) {
+    return schedules.find(s => s.id === id)?.address ?? ''
   }
 
   const dates = [...new Set(schedules.map(s => s.date))].sort()
@@ -304,15 +355,48 @@ export default function MapTab({ trip }: Props) {
         </div>
       )}
 
-      {/* 자동차 경로 요약 */}
+      {/* 자동차 경로 요약 — 클릭하면 구간별 코스 펼침 */}
       {routeInfo && (
-        <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-2.5 flex items-center gap-2">
-          <span className="text-base">🚗</span>
-          <span className="text-sm font-semibold text-blue-700">
-            자동차 총 {formatDuration(routeInfo.duration)}
-          </span>
-          <span className="text-xs text-blue-400">· {(routeInfo.distance / 1000).toFixed(1)}km</span>
-          <span className="text-[11px] text-slate-400 ml-auto">실시간 도로 기준</span>
+        <div className="space-y-2">
+          <button
+            onClick={() => {
+              const next = !showLegs
+              setShowLegs(next)
+              if (next) showFullRoute() // 펼칠 때 전체 경로 복원
+            }}
+            className="w-full bg-blue-50 border border-blue-100 rounded-xl px-4 py-2.5 flex items-center gap-2 hover:bg-blue-100/70 transition-colors"
+          >
+            <span className="text-base">🚗</span>
+            <span className="text-sm font-semibold text-blue-700">
+              자동차 총 {formatDuration(routeInfo.duration)}
+            </span>
+            <span className="text-xs text-blue-400">· {(routeInfo.distance / 1000).toFixed(1)}km</span>
+            <span className="text-[11px] text-blue-400 ml-auto">{showLegs ? '접기 ▲' : '구간별 보기 ▼'}</span>
+          </button>
+
+          {/* 구간별 코스 */}
+          {showLegs && routeLegs.length > 0 && (
+            <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
+              {routeLegs.map((leg, i) => (
+                <div key={i} className="px-4 py-3 flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 text-sm">
+                      <span className="font-medium text-slate-800 truncate">{placeName(leg.fromId)}</span>
+                      <span className="text-slate-300 shrink-0">→</span>
+                      <span className="font-medium text-slate-800 truncate">{placeName(leg.toId)}</span>
+                    </div>
+                    <div className="flex items-center gap-1 mt-0.5 text-[11px] text-slate-400">
+                      {placeAddr(leg.fromId) && <span className="truncate">📍 {placeAddr(leg.fromId)}</span>}
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-sm font-semibold text-blue-600">🚗 {formatDuration(leg.duration)}</p>
+                    <p className="text-[11px] text-slate-400">{(leg.distance / 1000).toFixed(1)}km</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -323,7 +407,7 @@ export default function MapTab({ trip }: Props) {
       <ScheduleList
         schedules={selectedDate === 'all' ? schedules : schedules.filter(s => s.date === selectedDate)}
         onFocus={focusLocation}
-        highlightedId={highlightedId}
+        selectedId={selectedCardId}
       />
 
       {schedules.filter(s => !s.address).length > 0 && (
@@ -335,10 +419,10 @@ export default function MapTab({ trip }: Props) {
   )
 }
 
-function ScheduleList({ schedules, onFocus, highlightedId }: {
+function ScheduleList({ schedules, onFocus, selectedId }: {
   schedules: Schedule[]
   onFocus?: (s: Schedule) => void
-  highlightedId?: string | null
+  selectedId?: string | null
 }) {
   if (schedules.length === 0) return (
     <div className="text-center py-8 text-slate-400">
@@ -350,7 +434,7 @@ function ScheduleList({ schedules, onFocus, highlightedId }: {
     <div className="space-y-2">
       {schedules.map((s, idx) => {
         const clickable = !!onFocus && !!s.address
-        const isActive = highlightedId === s.id
+        const isActive = selectedId === s.id
         return (
           <div
             key={s.id}

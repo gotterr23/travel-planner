@@ -47,7 +47,10 @@ export async function POST(req: NextRequest) {
 
   // 도로 경로 좌표 평탄화 (vertexes: [x, y, x, y, ...])
   const path: Coord[] = []
+  // 구간(경유지 사이)별 소요시간·거리
+  const legs: { duration: number; distance: number }[] = []
   for (const section of route.sections ?? []) {
+    legs.push({ duration: section.duration ?? 0, distance: section.distance ?? 0 })
     for (const road of section.roads ?? []) {
       const v: number[] = road.vertexes ?? []
       for (let i = 0; i + 1 < v.length; i += 2) {
@@ -60,5 +63,6 @@ export async function POST(req: NextRequest) {
     duration: route.summary?.duration ?? 0, // 초
     distance: route.summary?.distance ?? 0, // 미터
     path,
+    legs, // 구간별 [{duration, distance}, ...] (지점 수 - 1개)
   })
 }
