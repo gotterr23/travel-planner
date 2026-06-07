@@ -71,5 +71,6 @@ export interface BudgetItem {
   title: string
   amount: number
   paid_by: string | null
+  receipt_url: string | null
   created_at: string
 }

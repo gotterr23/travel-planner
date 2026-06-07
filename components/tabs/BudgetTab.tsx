@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import type { Trip, BudgetItem } from '@/lib/types'
 
@@ -23,10 +23,16 @@ export default function BudgetTab({ trip, isAdmin: _isAdmin }: Props) {
   const [items, setItems] = useState<BudgetItem[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ category: '식비' as BudgetItem['category'], title: '', amount: '', paid_by: '' })
+  const [form, setForm] = useState({ category: '식비' as BudgetItem['category'], title: '', amount: '', paid_by: '', receipt_url: '' })
   const [selectedPayer, setSelectedPayer] = useState<string | null>(null)
   const [editingItem, setEditingItem] = useState<BudgetItem | null>(null)
-  const [editForm, setEditForm] = useState({ category: '식비' as BudgetItem['category'], title: '', amount: '', paid_by: '' })
+  const [editForm, setEditForm] = useState({ category: '식비' as BudgetItem['category'], title: '', amount: '', paid_by: '', receipt_url: '' })
+
+  // 영수증 업로드
+  const [uploadingReceipt, setUploadingReceipt] = useState(false)
+  const addReceiptInputRef = useRef<HTMLInputElement>(null)
+  const editReceiptInputRef = useRef<HTMLInputElement>(null)
+  const [viewReceipt, setViewReceipt] = useState<string | null>(null)
 
   // 카테고리 이름 커스터마이즈
   const [catNames, setCatNames] = useState<Record<string, string>>(
@@ -52,16 +58,36 @@ export default function BudgetTab({ trip, isAdmin: _isAdmin }: Props) {
     setLoading(false)
   }
 
+  // 영수증 이미지 업로드 → 공개 URL 반환
+  async function uploadReceipt(file: File): Promise<string | null> {
+    setUploadingReceipt(true)
+    const ext = file.name.split('.').pop()
+    const fileName = `${trip.id}/receipt-${Date.now()}.${ext}`
+    const { error } = await supabase.storage.from('references').upload(fileName, file)
+    let url: string | null = null
+    if (!error) {
+      url = supabase.storage.from('references').getPublicUrl(fileName).data.publicUrl
+    }
+    setUploadingReceipt(false)
+    return url
+  }
+
   async function addItem() {
     if (!form.title.trim() || !form.amount) return
-    await supabase.from('budget_items').insert({
+    const base = {
       trip_id: trip.id,
       category: form.category,
       title: form.title.trim(),
       amount: parseInt(form.amount),
       paid_by: form.paid_by.trim() || null,
-    })
-    setForm({ category: '식비', title: '', amount: '', paid_by: '' })
+    }
+    const payload = { ...base, receipt_url: form.receipt_url || null }
+    let { error } = await supabase.from('budget_items').insert(payload)
+    if (error && (error.code === 'PGRST204' || error.message?.includes('receipt_url'))) {
+      ;({ error } = await supabase.from('budget_items').insert(base))
+    }
+    if (error) return
+    setForm({ category: '식비', title: '', amount: '', paid_by: '', receipt_url: '' })
     setShowForm(false)
     loadItems()
   }
@@ -83,17 +109,23 @@ export default function BudgetTab({ trip, isAdmin: _isAdmin }: Props) {
 
   function openEdit(item: BudgetItem) {
     setEditingItem(item)
-    setEditForm({ category: item.category, title: item.title, amount: String(item.amount), paid_by: item.paid_by ?? '' })
+    setEditForm({ category: item.category, title: item.title, amount: String(item.amount), paid_by: item.paid_by ?? '', receipt_url: item.receipt_url ?? '' })
   }
 
   async function saveEdit() {
     if (!editingItem || !editForm.title.trim() || !editForm.amount) return
-    await supabase.from('budget_items').update({
+    const base = {
       category: editForm.category,
       title: editForm.title.trim(),
       amount: parseInt(editForm.amount),
       paid_by: editForm.paid_by.trim() || null,
-    }).eq('id', editingItem.id)
+    }
+    const payload = { ...base, receipt_url: editForm.receipt_url || null }
+    let { error } = await supabase.from('budget_items').update(payload).eq('id', editingItem.id)
+    if (error && (error.code === 'PGRST204' || error.message?.includes('receipt_url'))) {
+      ;({ error } = await supabase.from('budget_items').update(base).eq('id', editingItem.id))
+    }
+    if (error) return
     setEditingItem(null)
     loadItems()
   }
@@ -236,9 +268,34 @@ export default function BudgetTab({ trip, isAdmin: _isAdmin }: Props) {
               placeholder="결제자 (선택)"
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
           </div>
+
+          {/* 영수증 업로드 */}
+          <div>
+            <label className="text-xs font-medium text-slate-500 mb-1.5 block">영수증 (선택)</label>
+            <input ref={addReceiptInputRef} type="file" accept="image/*" className="hidden"
+              onChange={async e => {
+                const f = e.target.files?.[0]
+                if (f) { const url = await uploadReceipt(f); if (url) setForm(prev => ({ ...prev, receipt_url: url })) }
+                e.target.value = ''
+              }} />
+            {form.receipt_url ? (
+              <div className="relative inline-block">
+                <img src={form.receipt_url} alt="영수증" onClick={() => setViewReceipt(form.receipt_url)}
+                  className="w-24 h-24 object-cover rounded-lg border border-slate-200 cursor-pointer" />
+                <button onClick={() => setForm(f => ({ ...f, receipt_url: '' }))}
+                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">✕</button>
+              </div>
+            ) : (
+              <button onClick={() => addReceiptInputRef.current?.click()} disabled={uploadingReceipt}
+                className="w-full border-2 border-dashed border-slate-200 rounded-lg py-4 text-sm text-slate-400 hover:border-blue-300 hover:text-blue-400 transition-colors disabled:opacity-50">
+                {uploadingReceipt ? '업로드 중...' : '📷 영수증 사진 추가'}
+              </button>
+            )}
+          </div>
+
           <div className="flex gap-2">
             <button onClick={addItem} className="flex-1 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium py-2 rounded-lg">추가</button>
-            <button onClick={() => setShowForm(false)} className="flex-1 bg-slate-100 text-slate-600 text-sm font-medium py-2 rounded-lg">취소</button>
+            <button onClick={() => { setShowForm(false); setForm({ category: '식비', title: '', amount: '', paid_by: '', receipt_url: '' }) }} className="flex-1 bg-slate-100 text-slate-600 text-sm font-medium py-2 rounded-lg">취소</button>
           </div>
         </div>
       )}
@@ -264,11 +321,20 @@ export default function BudgetTab({ trip, isAdmin: _isAdmin }: Props) {
               onClick={() => openEdit(item)}
               className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex items-center gap-3 cursor-pointer hover:bg-slate-50 active:bg-slate-100 transition-colors"
             >
-              <div className="text-xl shrink-0">{CATEGORY_EMOJI[item.category]}</div>
+              {item.receipt_url ? (
+                <img src={item.receipt_url} alt="영수증"
+                  onClick={e => { e.stopPropagation(); setViewReceipt(item.receipt_url) }}
+                  className="w-11 h-11 object-cover rounded-lg border border-slate-200 shrink-0 cursor-pointer" />
+              ) : (
+                <div className="text-xl shrink-0">{CATEGORY_EMOJI[item.category]}</div>
+              )}
               <div className="flex-1 min-w-0">
                 <p className="font-medium text-slate-800 text-sm">{item.title}</p>
                 <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                   <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{CATEGORY_EMOJI[item.category]} {label(item.category)}</span>
+                  {item.receipt_url && (
+                    <span className="text-xs text-emerald-500 bg-emerald-50 px-2 py-0.5 rounded-full">🧾 영수증</span>
+                  )}
                   {item.paid_by && (
                     <button
                       onClick={e => { e.stopPropagation(); setSelectedPayer(item.paid_by === selectedPayer ? null : item.paid_by) }}
@@ -391,6 +457,30 @@ export default function BudgetTab({ trip, isAdmin: _isAdmin }: Props) {
               />
             </div>
 
+            {/* 영수증 업로드 */}
+            <div>
+              <label className="text-xs font-medium text-slate-500 mb-1.5 block">영수증 (선택)</label>
+              <input ref={editReceiptInputRef} type="file" accept="image/*" className="hidden"
+                onChange={async e => {
+                  const f = e.target.files?.[0]
+                  if (f) { const url = await uploadReceipt(f); if (url) setEditForm(prev => ({ ...prev, receipt_url: url })) }
+                  e.target.value = ''
+                }} />
+              {editForm.receipt_url ? (
+                <div className="relative inline-block">
+                  <img src={editForm.receipt_url} alt="영수증" onClick={() => setViewReceipt(editForm.receipt_url)}
+                    className="w-24 h-24 object-cover rounded-lg border border-slate-200 cursor-pointer" />
+                  <button onClick={() => setEditForm(f => ({ ...f, receipt_url: '' }))}
+                    className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">✕</button>
+                </div>
+              ) : (
+                <button onClick={() => editReceiptInputRef.current?.click()} disabled={uploadingReceipt}
+                  className="w-full border-2 border-dashed border-slate-200 rounded-lg py-4 text-sm text-slate-400 hover:border-blue-300 hover:text-blue-400 transition-colors disabled:opacity-50">
+                  {uploadingReceipt ? '업로드 중...' : '📷 영수증 사진 추가'}
+                </button>
+              )}
+            </div>
+
             <div className="flex gap-2 pt-1">
               <button
                 onClick={() => setEditingItem(null)}
@@ -405,6 +495,17 @@ export default function BudgetTab({ trip, isAdmin: _isAdmin }: Props) {
                 수정 완료
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 영수증 확대 모달 */}
+      {viewReceipt && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[60] p-4" onClick={() => setViewReceipt(null)}>
+          <div className="relative max-w-lg w-full" onClick={e => e.stopPropagation()}>
+            <img src={viewReceipt} alt="영수증" className="w-full rounded-xl" />
+            <button onClick={() => setViewReceipt(null)}
+              className="absolute top-2 right-2 bg-black/50 text-white text-sm px-3 py-1.5 rounded-lg">닫기</button>
           </div>
         </div>
       )}

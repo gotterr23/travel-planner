@@ -23,6 +23,9 @@ export default function AlbumTab({ trip, focusScheduleId, onFocusHandled }: Prop
   const [editingCatId, setEditingCatId] = useState<string | null>(null)
   const [editingCatName, setEditingCatName] = useState('')
 
+  // 사진 추가 시 카테고리 선택 모달
+  const [showUploadPicker, setShowUploadPicker] = useState(false)
+
   const uploadTargetRef = useRef<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -119,7 +122,7 @@ export default function AlbumTab({ trip, focusScheduleId, onFocusHandled }: Prop
             카테고리 관리
           </button>
           <button
-            onClick={() => triggerUpload(null)}
+            onClick={() => setShowUploadPicker(true)}
             disabled={uploading}
             className="text-sm text-white bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 px-3 py-1.5 rounded-lg transition-colors font-medium"
           >
@@ -131,7 +134,7 @@ export default function AlbumTab({ trip, focusScheduleId, onFocusHandled }: Prop
       {/* 빈 상태 — 사진 없을 때 */}
       {!hasPhotos ? (
         <div
-          onClick={() => triggerUpload(null)}
+          onClick={() => setShowUploadPicker(true)}
           className="border-2 border-dashed border-slate-200 rounded-2xl py-20 flex flex-col items-center justify-center text-slate-400 cursor-pointer hover:border-blue-300 hover:text-blue-400 transition-colors"
         >
           <div className="text-5xl mb-4">📸</div>
@@ -139,11 +142,11 @@ export default function AlbumTab({ trip, focusScheduleId, onFocusHandled }: Prop
           <p className="text-sm mt-1.5">여러 장 한 번에 선택 가능해요</p>
         </div>
       ) : (
-        /* 카테고리별 사진 목록 */
+        /* 카테고리별 사진 목록 — 사진이 있는 카테고리만 표시 */
         <div className="space-y-3">
           {categories.map(cat => {
             const catPhotos = getPhotosFor(cat.id)
-            if (!cat.isSchedule && catPhotos.length === 0) return null
+            if (catPhotos.length === 0) return null   // 사진 없는 카테고리는 숨김
             const isHighlighted = highlightedId === cat.id
             return (
               <div
@@ -157,9 +160,7 @@ export default function AlbumTab({ trip, focusScheduleId, onFocusHandled }: Prop
                   <span className="text-sm shrink-0">{cat.isSchedule ? '📍' : '📌'}</span>
                   <span className="flex-1 font-semibold text-sm text-slate-700 truncate">
                     {cat.label}
-                    {catPhotos.length > 0 && (
-                      <span className="font-normal text-slate-400 ml-1">({catPhotos.length}장)</span>
-                    )}
+                    <span className="font-normal text-slate-400 ml-1">({catPhotos.length}장)</span>
                   </span>
                   <button
                     onClick={() => triggerUpload(cat.id)}
@@ -170,34 +171,24 @@ export default function AlbumTab({ trip, focusScheduleId, onFocusHandled }: Prop
                   </button>
                 </div>
 
-                {catPhotos.length === 0 ? (
+                <div className="p-2 grid grid-cols-3 gap-1.5">
+                  {catPhotos.map(photo => (
+                    <div
+                      key={photo.id}
+                      onClick={() => setSelected(photo)}
+                      className="aspect-square rounded-lg overflow-hidden bg-slate-100 cursor-pointer hover:opacity-90 transition-opacity"
+                    >
+                      <img src={photo.image_url} alt="" className="w-full h-full object-cover" />
+                    </div>
+                  ))}
                   <div
                     onClick={() => triggerUpload(cat.id)}
-                    className="py-8 text-center text-slate-300 text-sm cursor-pointer hover:bg-slate-50 transition-colors"
+                    className="aspect-square rounded-lg border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 cursor-pointer hover:border-blue-300 hover:text-blue-400 transition-colors"
                   >
-                    <div className="text-2xl mb-1">📸</div>
-                    <p>사진을 추가해보세요</p>
+                    <span className="text-xl">+</span>
+                    <span className="text-xs mt-0.5">추가</span>
                   </div>
-                ) : (
-                  <div className="p-2 grid grid-cols-3 gap-1.5">
-                    {catPhotos.map(photo => (
-                      <div
-                        key={photo.id}
-                        onClick={() => setSelected(photo)}
-                        className="aspect-square rounded-lg overflow-hidden bg-slate-100 cursor-pointer hover:opacity-90 transition-opacity"
-                      >
-                        <img src={photo.image_url} alt="" className="w-full h-full object-cover" />
-                      </div>
-                    ))}
-                    <div
-                      onClick={() => triggerUpload(cat.id)}
-                      className="aspect-square rounded-lg border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 cursor-pointer hover:border-blue-300 hover:text-blue-400 transition-colors"
-                    >
-                      <span className="text-xl">+</span>
-                      <span className="text-xs mt-0.5">추가</span>
-                    </div>
-                  </div>
-                )}
+                </div>
               </div>
             )
           })}
@@ -216,6 +207,42 @@ export default function AlbumTab({ trip, focusScheduleId, onFocusHandled }: Prop
           e.target.value = ''
         }}
       />
+
+      {/* 사진 추가 — 카테고리 선택 모달 */}
+      {showUploadPicker && (
+        <div className="fixed inset-0 bg-black/50 flex items-end justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-5 space-y-4 max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-slate-800">사진을 어느 카테고리에 추가할까요?</h3>
+              <button onClick={() => setShowUploadPicker(false)} className="text-slate-400 hover:text-slate-600 text-xl">✕</button>
+            </div>
+            <div className="space-y-2 overflow-y-auto flex-1">
+              {schedules.map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => { setShowUploadPicker(false); triggerUpload(s.id) }}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-50 border border-slate-100 hover:bg-blue-50 hover:border-blue-200 transition-colors text-left"
+                >
+                  <span className="text-base">📍</span>
+                  <span className="flex-1 text-sm font-medium text-slate-700">{s.place_name}</span>
+                  <span className="text-xs text-slate-400">{getPhotosFor(s.id).length}장</span>
+                </button>
+              ))}
+              <button
+                onClick={() => { setShowUploadPicker(false); triggerUpload(null) }}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-50 border border-slate-100 hover:bg-blue-50 hover:border-blue-200 transition-colors text-left"
+              >
+                <span className="text-base">📌</span>
+                <span className="flex-1 text-sm font-medium text-slate-700">기타</span>
+                <span className="text-xs text-slate-400">{getPhotosFor(null).length}장</span>
+              </button>
+            </div>
+            {schedules.length === 0 && (
+              <p className="text-xs text-slate-400 text-center">일정 탭에서 장소를 추가하면 카테고리가 늘어납니다</p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 카테고리 관리 모달 */}
       {showCatManage && (
