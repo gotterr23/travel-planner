@@ -149,17 +149,19 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
   }
   async function saveItem() {
     if (!itemForm.title.trim()) return
+    const title = itemForm.title.trim()
     // 카테고리가 일정명과 일치하면 schedule_id도 함께 저장(주소 연동 유지)
     const matched = schedules.find(s => s.place_name === itemForm.category)
-    const base = {
+    const base: Record<string, unknown> = {
       trip_id: trip.id,
       schedule_id: matched?.id ?? null,
       place: itemForm.place.trim() || null,
       time: itemForm.time || null,
-      title: itemForm.title.trim(),
+      title,
       note: itemForm.note.trim() || null,
     }
-    const payload = { ...base, category: itemForm.category || null }
+    // category(신규), item(구버전 NOT NULL 컬럼) — DB 스키마에 따라 선택적으로 포함
+    const full = { ...base, category: itemForm.category || null, item: title }
 
     async function run(p: Record<string, unknown>) {
       return editingItem
@@ -167,12 +169,17 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
         : supabase.from('checklist_items').insert(p)
     }
 
-    let { error } = await run(payload)
-    // category 컬럼이 아직 없으면 컬럼 없이 재시도(일정 연동만 유지)
-    if (error && (error.code === 'PGRST204' || error.message?.includes('category'))) {
-      ;({ error } = await run(base))
+    // 누락된 컬럼이 있으면 해당 컬럼만 제거하고 재시도
+    let payload: Record<string, unknown> = { ...full }
+    for (let i = 0; i < 3; i++) {
+      const { error } = await run(payload)
+      if (!error) { setShowItemModal(false); loadAll(); return }
+      const next = { ...payload }
+      if (error.message?.includes("'category'")) delete next.category
+      else if (error.message?.includes("'item'")) delete next.item
+      else break // 컬럼 누락 외 다른 오류
+      payload = next
     }
-    if (!error) { setShowItemModal(false); loadAll() }
   }
   async function deleteItem(id: string) {
     if (!confirm('삭제할까요?')) return
