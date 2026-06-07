@@ -18,7 +18,7 @@ const CAT_EMOJI: Record<string, string> = {
 function catEmoji(name: string) { return CAT_EMOJI[name] ?? '📍' }
 
 const ITEMS_PER_PAGE = 12
-const EMPTY_ITEM_FORM = { category: '', place: '', time: '', title: '', note: '' }
+const EMPTY_ITEM_FORM = { category: '', title: '', note: '' }
 
 export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Props) {
   // 기본(고정) 카테고리 — board_categories
@@ -144,19 +144,19 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
   }
   function openEditItem(item: ChecklistItem) {
     setEditingItem(item)
-    setItemForm({ category: itemCat(item), place: item.place ?? '', time: item.time ?? '', title: item.title, note: item.note ?? '' })
+    setItemForm({ category: itemCat(item), title: item.title, note: item.note ?? '' })
     setShowItemModal(true)
   }
   async function saveItem() {
     if (!itemForm.title.trim()) return
     const title = itemForm.title.trim()
-    // 카테고리가 일정명과 일치하면 schedule_id도 함께 저장(주소 연동 유지)
+    // 카테고리가 일정명과 일치하면 일정의 장소·시간을 자동 연동
     const matched = schedules.find(s => s.place_name === itemForm.category)
     const base: Record<string, unknown> = {
       trip_id: trip.id,
       schedule_id: matched?.id ?? null,
-      place: itemForm.place.trim() || null,
-      time: itemForm.time || null,
+      place: matched?.address ?? null,
+      time: matched?.time ?? null,
       title,
       note: itemForm.note.trim() || null,
     }
@@ -285,48 +285,42 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
           <button onClick={openAddItem} className="text-sm font-semibold text-blue-500 hover:text-blue-600">+ 추가</button>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-100">
-                <th className="text-left text-xs font-medium text-slate-500 px-4 py-2.5 whitespace-nowrap">카테고리</th>
-                <th className="text-left text-xs font-medium text-slate-500 px-4 py-2.5 whitespace-nowrap">장소</th>
-                <th className="text-left text-xs font-medium text-slate-500 px-4 py-2.5 whitespace-nowrap">시간</th>
-                <th className="text-left text-xs font-medium text-slate-500 px-4 py-2.5 whitespace-nowrap">준비물</th>
-                <th className="text-left text-xs font-medium text-slate-500 px-4 py-2.5 whitespace-nowrap">비고</th>
-                <th className="px-2 py-2.5 w-6"></th>
+        <table className="w-full text-sm table-fixed">
+          <thead>
+            <tr className="border-b border-slate-100">
+              <th className="text-left text-xs font-medium text-slate-500 px-4 py-2.5 w-28">카테고리</th>
+              <th className="text-left text-xs font-medium text-slate-500 px-3 py-2.5">준비물</th>
+              <th className="text-left text-xs font-medium text-slate-500 px-3 py-2.5">비고</th>
+              <th className="px-2 py-2.5 w-8"></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50">
+            {pagedChecklist.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="text-center text-slate-300 text-sm py-8">
+                  + 추가 버튼으로 준비물을 입력해보세요
+                </td>
               </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {pagedChecklist.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="text-center text-slate-300 text-sm py-8">
-                    + 추가 버튼으로 준비물을 입력해보세요
+            ) : pagedChecklist.map(item => {
+              const cat = itemCat(item)
+              return (
+                <tr key={item.id} onClick={() => openEditItem(item)} className="hover:bg-slate-50 cursor-pointer group align-top">
+                  <td className="px-4 py-3">
+                    {cat
+                      ? <span className="inline-block text-xs bg-blue-50 text-blue-500 px-2 py-0.5 rounded-full break-keep">{catEmoji(cat)} {cat}</span>
+                      : <span className="text-xs text-slate-300">-</span>}
+                  </td>
+                  <td className="px-3 py-3 font-medium text-slate-800 break-words whitespace-pre-wrap">{item.title}</td>
+                  <td className="px-3 py-3 text-slate-500 break-words whitespace-pre-wrap">{item.note || '-'}</td>
+                  <td className="px-2 py-3">
+                    <button onClick={e => { e.stopPropagation(); deleteItem(item.id) }}
+                      className="text-slate-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
                   </td>
                 </tr>
-              ) : pagedChecklist.map(item => {
-                const cat = itemCat(item)
-                return (
-                  <tr key={item.id} onClick={() => openEditItem(item)} className="hover:bg-slate-50 cursor-pointer group">
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      {cat
-                        ? <span className="text-xs bg-blue-50 text-blue-500 px-2 py-0.5 rounded-full">{catEmoji(cat)} {cat}</span>
-                        : <span className="text-xs text-slate-300">-</span>}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{item.place || '-'}</td>
-                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{item.time || '-'}</td>
-                    <td className="px-4 py-3 font-medium text-slate-800">{item.title}</td>
-                    <td className="px-4 py-3 text-slate-500 max-w-32 truncate">{item.note || '-'}</td>
-                    <td className="px-2 py-3">
-                      <button onClick={e => { e.stopPropagation(); deleteItem(item.id) }}
-                        className="text-slate-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+              )
+            })}
+          </tbody>
+        </table>
 
         {totalChecklistPages > 1 && (
           <div className="flex items-center justify-center gap-3 py-3 border-t border-slate-100">
@@ -580,34 +574,22 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
               <label className="text-xs font-medium text-slate-500 mb-1 block">카테고리</label>
               <select
                 value={itemForm.category}
-                onChange={e => {
-                  const cat = e.target.value
-                  const sched = schedules.find(s => s.place_name === cat)
-                  setItemForm(f => ({
-                    ...f,
-                    category: cat,
-                    place: sched?.address ? sched.address : f.place,
-                  }))
-                }}
+                onChange={e => setItemForm(f => ({ ...f, category: e.target.value }))}
                 className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white">
                 <option value="">분류 없음</option>
                 {allCats.map(cat => (
                   <option key={cat} value={cat}>{catEmoji(cat)} {cat}</option>
                 ))}
               </select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-medium text-slate-500 mb-1 block">장소</label>
-                <input type="text" value={itemForm.place} onChange={e => setItemForm(f => ({ ...f, place: e.target.value }))}
-                  placeholder="예: 불국사 입구"
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-slate-500 mb-1 block">시간</label>
-                <input type="time" value={itemForm.time} onChange={e => setItemForm(f => ({ ...f, time: e.target.value }))}
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-              </div>
+              {(() => {
+                const sched = schedules.find(s => s.place_name === itemForm.category)
+                if (!sched || (!sched.address && !sched.time)) return null
+                return (
+                  <p className="text-[11px] text-slate-400 mt-1.5">
+                    📍 일정 연동: {sched.address || '주소 없음'}{sched.time ? ` · ${sched.time}` : ''}
+                  </p>
+                )
+              })()}
             </div>
             <div>
               <label className="text-xs font-medium text-slate-500 mb-1 block">준비물 <span className="text-red-400">*</span></label>
