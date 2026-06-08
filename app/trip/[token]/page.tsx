@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams, useSearchParams } from 'next/navigation'
+import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import type { Trip } from '@/lib/types'
 import ScheduleTab from '@/components/tabs/ScheduleTab'
@@ -21,6 +21,7 @@ const TABS: { key: Tab; label: string; emoji: string }[] = [
 ]
 
 export default function TripPage() {
+  const router = useRouter()
   const params = useParams()
   const searchParams = useSearchParams()
   const token = params.token as string
@@ -169,15 +170,24 @@ export default function TripPage() {
       {/* 상단 헤더 */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div>
-            <h1 className="font-bold text-slate-800 text-lg leading-tight">{trip.title}</h1>
-            {(trip.start_date || trip.end_date) && (
-              <p className="text-xs text-slate-400 mt-0.5">
-                {trip.start_date && new Date(trip.start_date).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })}
-                {trip.start_date && trip.end_date && ' ~ '}
-                {trip.end_date && new Date(trip.end_date).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })}
-              </p>
-            )}
+          <div className="flex items-center gap-2.5 min-w-0">
+            <button
+              onClick={() => router.push('/')}
+              title="여행 목록으로"
+              className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-blue-500 transition-colors"
+            >
+              🏠
+            </button>
+            <div className="min-w-0">
+              <h1 className="font-bold text-slate-800 text-lg leading-tight truncate">{trip.title}</h1>
+              {(trip.start_date || trip.end_date) && (
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {trip.start_date && new Date(trip.start_date).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })}
+                  {trip.start_date && trip.end_date && ' ~ '}
+                  {trip.end_date && new Date(trip.end_date).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })}
+                </p>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             {isAdmin && (

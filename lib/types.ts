@@ -10,8 +10,19 @@ export interface Trip {
   admin_token: string
   member_token: string
   board_categories: string[] | null
-  settings: { budgetCategories?: Record<string, string>; hiddenScheduleCats?: string[] } | null
+  settings: {
+    budgetCategories?: Record<string, string>
+    hiddenScheduleCats?: string[]
+    memberRoles?: MemberRole[]
+  } | null
   created_at: string
+}
+
+export interface MemberRole {
+  id: string
+  name: string
+  role: string
+  note: string
 }
 
 export interface Schedule {

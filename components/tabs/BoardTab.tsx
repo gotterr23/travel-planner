@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
-import type { Trip, Schedule, ReferenceItem, ChecklistItem } from '@/lib/types'
+import type { Trip, Schedule, ReferenceItem, ChecklistItem, MemberRole } from '@/lib/types'
 
 interface Props {
   trip: Trip
@@ -33,6 +33,12 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
   const [loading, setLoading] = useState(true)
 
   const [showCatManage, setShowCatManage] = useState(false)
+
+  // 역할 분담 (settings.memberRoles)
+  const [memberRoles, setMemberRoles] = useState<MemberRole[]>(trip.settings?.memberRoles ?? [])
+  const [showRoleModal, setShowRoleModal] = useState(false)
+  const [editingRole, setEditingRole] = useState<MemberRole | null>(null)
+  const [roleForm, setRoleForm] = useState({ name: '', role: '', note: '' })
 
   // ★ 공통 카테고리 필터 (준비물·링크·사진 모두 적용)
   const [filterCat, setFilterCat] = useState('전체')
@@ -134,6 +140,43 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
       .update({ settings: { ...(trip.settings ?? {}), hiddenScheduleCats: updated } })
       .eq('id', trip.id)
     setHiddenSchedCats(updated)
+  }
+
+  // ── 역할 분담 ──
+  // 다른 settings 값을 보존하며 memberRoles만 저장
+  async function persistRoles(updated: MemberRole[]) {
+    const { data } = await supabase.from('trips').select('settings').eq('id', trip.id).single()
+    const current = (data?.settings as Record<string, unknown>) ?? {}
+    await supabase.from('trips').update({ settings: { ...current, memberRoles: updated } }).eq('id', trip.id)
+    setMemberRoles(updated)
+  }
+  function openAddRole() {
+    setEditingRole(null)
+    setRoleForm({ name: '', role: '', note: '' })
+    setShowRoleModal(true)
+  }
+  function openEditRole(m: MemberRole) {
+    setEditingRole(m)
+    setRoleForm({ name: m.name, role: m.role, note: m.note })
+    setShowRoleModal(true)
+  }
+  async function saveRole() {
+    if (!roleForm.name.trim()) return
+    const entry: MemberRole = {
+      id: editingRole?.id ?? (typeof crypto !== 'undefined' ? crypto.randomUUID() : String(Date.now())),
+      name: roleForm.name.trim(),
+      role: roleForm.role.trim(),
+      note: roleForm.note.trim(),
+    }
+    const updated = editingRole
+      ? memberRoles.map(m => (m.id === entry.id ? entry : m))
+      : [...memberRoles, entry]
+    await persistRoles(updated)
+    setShowRoleModal(false)
+  }
+  async function deleteRole(id: string) {
+    if (!confirm('이 역할을 삭제할까요?')) return
+    await persistRoles(memberRoles.filter(m => m.id !== id))
   }
 
   // ── 준비물 ──
@@ -276,6 +319,39 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
             {cat === '전체' ? '전체' : `${catEmoji(cat)} ${cat}`}
           </button>
         ))}
+      </div>
+
+      {/* ── 섹션 0: 역할 분담 ── */}
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+          <span className="font-semibold text-slate-700 text-sm">👥 역할 분담</span>
+          <button onClick={openAddRole} className="text-sm font-semibold text-blue-500 hover:text-blue-600">+ 추가</button>
+        </div>
+        {memberRoles.length === 0 ? (
+          <div className="text-center text-slate-300 text-sm py-6">
+            + 추가 버튼으로 멤버별 역할을 정해보세요
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-50">
+            {memberRoles.map(m => (
+              <div key={m.id} onClick={() => openEditRole(m)}
+                className="px-4 py-3 flex items-center gap-3 hover:bg-slate-50 cursor-pointer group">
+                <div className="w-9 h-9 rounded-full bg-blue-50 text-blue-500 flex items-center justify-center text-sm font-bold shrink-0">
+                  {m.name.slice(0, 2)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium text-slate-800 text-sm">{m.name}</span>
+                    {m.role && <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">{m.role}</span>}
+                  </div>
+                  {m.note && <p className="text-xs text-slate-400 mt-0.5 truncate">{m.note}</p>}
+                </div>
+                <button onClick={e => { e.stopPropagation(); deleteRole(m.id) }}
+                  className="text-slate-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity text-xs shrink-0">✕</button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── 섹션 1: 준비물 ── */}
@@ -558,6 +634,44 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
               className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 rounded-xl">
               사진 선택하기
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── 역할 분담 추가/수정 모달 ── */}
+      {showRoleModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-end justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-slate-800">{editingRole ? '역할 수정' : '역할 추가'}</h3>
+              <button onClick={() => setShowRoleModal(false)} className="text-slate-400 text-xl">✕</button>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-500 mb-1 block">이름 <span className="text-red-400">*</span></label>
+              <input type="text" value={roleForm.name} onChange={e => setRoleForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="예: 홍길동"
+                className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-500 mb-1 block">역할 (맡은 일)</label>
+              <input type="text" value={roleForm.role} onChange={e => setRoleForm(f => ({ ...f, role: e.target.value }))}
+                onKeyDown={e => e.key === 'Enter' && saveRole()} placeholder="예: 숙소·예약 담당"
+                className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-500 mb-1 block">메모</label>
+              <input type="text" value={roleForm.note} onChange={e => setRoleForm(f => ({ ...f, note: e.target.value }))}
+                placeholder="예: 연락처, 비고 등"
+                className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => setShowRoleModal(false)}
+                className="flex-1 border border-slate-200 text-slate-600 font-medium py-3 rounded-xl hover:bg-slate-50">취소</button>
+              <button onClick={saveRole}
+                className="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 rounded-xl">
+                {editingRole ? '수정 완료' : '추가'}
+              </button>
+            </div>
           </div>
         </div>
       )}
