@@ -18,7 +18,12 @@ const CAT_EMOJI: Record<string, string> = {
 function catEmoji(name: string) { return CAT_EMOJI[name] ?? '📍' }
 
 const ITEMS_PER_PAGE = 12
-const EMPTY_ITEM_FORM = { category: '', title: '', note: '' }
+const EMPTY_ITEM_FORM = { categories: [] as string[], title: '', note: '' }
+
+// 카테고리 배열 토글 헬퍼
+function toggleCat(list: string[], cat: string): string[] {
+  return list.includes(cat) ? list.filter(c => c !== cat) : [...list, cat]
+}
 
 export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Props) {
   // 기본(고정) 카테고리 — board_categories
@@ -38,7 +43,9 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
   const [memberRoles, setMemberRoles] = useState<MemberRole[]>(trip.settings?.memberRoles ?? [])
   const [showRoleModal, setShowRoleModal] = useState(false)
   const [editingRole, setEditingRole] = useState<MemberRole | null>(null)
-  const [roleForm, setRoleForm] = useState({ name: '', role: '', note: '' })
+  const [roleForm, setRoleForm] = useState({ name: '', role: '', note: '', avatarUrl: '' })
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const avatarInputRef = useRef<HTMLInputElement>(null)
 
   // ★ 공통 카테고리 필터 (준비물·링크·사진 모두 적용)
   const [filterCat, setFilterCat] = useState('전체')
@@ -52,19 +59,36 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
   // 링크
   const [linkPage, setLinkPage] = useState(0)
   const [showLinkForm, setShowLinkForm] = useState(false)
-  const [linkCategory, setLinkCategory] = useState('')
+  const [linkCategories, setLinkCategories] = useState<string[]>([])
   const [linkForm, setLinkForm] = useState({ url: '', title: '', memo: '' })
 
   // 사진
   const [imagePage, setImagePage] = useState(0)
   const [uploading, setUploading] = useState(false)
-  const [imageCategory, setImageCategory] = useState('')
+  const [imageCategories, setImageCategories] = useState<string[]>([])
   const [showImageCatPicker, setShowImageCatPicker] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // 카테고리 변경
   const [editingRef, setEditingRef] = useState<ReferenceItem | null>(null)
-  const [editingRefCat, setEditingRefCat] = useState('')
+  const [editingRefCats, setEditingRefCats] = useState<string[]>([])
+
+  // 선택 삭제 모드
+  const [selMode, setSelMode] = useState<null | 'checklist' | 'link' | 'image'>(null)
+  const [selSet, setSelSet] = useState<Set<string>>(new Set())
+  function enterSel(mode: 'checklist' | 'link' | 'image') { setSelMode(mode); setSelSet(new Set()) }
+  function exitSel() { setSelMode(null); setSelSet(new Set()) }
+  function toggleSel(id: string) {
+    setSelSet(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  }
+  async function deleteSelected() {
+    if (selSet.size === 0) { exitSel(); return }
+    if (!confirm(`${selSet.size}개를 삭제할까요?`)) return
+    const ids = [...selSet]
+    if (selMode === 'checklist') await supabase.from('checklist_items').delete().in('id', ids)
+    else await supabase.from('reference_items').delete().in('id', ids)
+    exitSel(); loadAll()
+  }
 
   useEffect(() => { loadAll() }, [trip.id])
 
@@ -97,9 +121,16 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
     return schedules.find(s => s.id === scheduleId)?.place_name ?? ''
   }
 
-  // 준비물 항목의 카테고리 (category 우선, 없으면 일정명 하위호환)
-  function itemCat(item: ChecklistItem): string {
-    return item.category ?? getSchedLabel(item.schedule_id) ?? ''
+  // 준비물 항목의 카테고리 목록 (categories 우선, 없으면 단일 category / 일정명 하위호환)
+  function itemCats(item: ChecklistItem): string[] {
+    if (item.categories && item.categories.length > 0) return item.categories
+    const single = item.category ?? getSchedLabel(item.schedule_id)
+    return single ? [single] : []
+  }
+  // 링크·사진 자료의 카테고리 목록
+  function refCats(item: ReferenceItem): string[] {
+    if (item.categories && item.categories.length > 0) return item.categories
+    return item.category ? [item.category] : []
   }
 
   // ── 통합 카테고리 목록 ──
@@ -152,13 +183,24 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
   }
   function openAddRole() {
     setEditingRole(null)
-    setRoleForm({ name: '', role: '', note: '' })
+    setRoleForm({ name: '', role: '', note: '', avatarUrl: '' })
     setShowRoleModal(true)
   }
   function openEditRole(m: MemberRole) {
     setEditingRole(m)
-    setRoleForm({ name: m.name, role: m.role, note: m.note })
+    setRoleForm({ name: m.name, role: m.role, note: m.note, avatarUrl: m.avatarUrl ?? '' })
     setShowRoleModal(true)
+  }
+  async function uploadAvatar(file: File) {
+    setUploadingAvatar(true)
+    const ext = file.name.split('.').pop()
+    const fileName = `${trip.id}/avatar-${Date.now()}.${ext}`
+    const { error } = await supabase.storage.from('references').upload(fileName, file)
+    if (!error) {
+      const url = supabase.storage.from('references').getPublicUrl(fileName).data.publicUrl
+      setRoleForm(f => ({ ...f, avatarUrl: url }))
+    }
+    setUploadingAvatar(false)
   }
   async function saveRole() {
     if (!roleForm.name.trim()) return
@@ -167,6 +209,7 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
       name: roleForm.name.trim(),
       role: roleForm.role.trim(),
       note: roleForm.note.trim(),
+      avatarUrl: roleForm.avatarUrl || undefined,
     }
     const updated = editingRole
       ? memberRoles.map(m => (m.id === entry.id ? entry : m))
@@ -182,19 +225,20 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
   // ── 준비물 ──
   function openAddItem() {
     setEditingItem(null)
-    setItemForm({ ...EMPTY_ITEM_FORM, category: filterCat !== '전체' ? filterCat : '' })
+    setItemForm({ ...EMPTY_ITEM_FORM, categories: filterCat !== '전체' ? [filterCat] : [] })
     setShowItemModal(true)
   }
   function openEditItem(item: ChecklistItem) {
     setEditingItem(item)
-    setItemForm({ category: itemCat(item), title: item.title, note: item.note ?? '' })
+    setItemForm({ categories: itemCats(item), title: item.title, note: item.note ?? '' })
     setShowItemModal(true)
   }
   async function saveItem() {
     if (!itemForm.title.trim()) return
     const title = itemForm.title.trim()
-    // 카테고리가 일정명과 일치하면 일정의 장소·시간을 자동 연동
-    const matched = schedules.find(s => s.place_name === itemForm.category)
+    const cats = itemForm.categories
+    // 선택된 카테고리 중 일정명과 일치하는 것이 있으면 일정 장소·시간 연동
+    const matched = schedules.find(s => cats.includes(s.place_name))
     const base: Record<string, unknown> = {
       trip_id: trip.id,
       schedule_id: matched?.id ?? null,
@@ -203,8 +247,8 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
       title,
       note: itemForm.note.trim() || null,
     }
-    // category(신규), item(구버전 NOT NULL 컬럼) — DB 스키마에 따라 선택적으로 포함
-    const full = { ...base, category: itemForm.category || null, item: title }
+    // categories(다중·신규), category(단일·하위호환), item(구버전 NOT NULL) — 스키마에 따라 선택 포함
+    const full = { ...base, categories: cats, category: cats[0] ?? null, item: title }
 
     async function run(p: Record<string, unknown>) {
       return editingItem
@@ -214,11 +258,12 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
 
     // 누락된 컬럼이 있으면 해당 컬럼만 제거하고 재시도
     let payload: Record<string, unknown> = { ...full }
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       const { error } = await run(payload)
       if (!error) { setShowItemModal(false); loadAll(); return }
       const next = { ...payload }
-      if (error.message?.includes("'category'")) delete next.category
+      if (error.message?.includes("'categories'")) delete next.categories
+      else if (error.message?.includes("'category'")) delete next.category
       else if (error.message?.includes("'item'")) delete next.item
       else break // 컬럼 누락 외 다른 오류
       payload = next
@@ -229,35 +274,44 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
     await supabase.from('checklist_items').delete().eq('id', id); loadAll()
   }
 
+  // 자료(링크·사진) insert — categories 컬럼 없으면 제거하고 재시도
+  async function insertRef(payload: Record<string, unknown>, cats: string[]) {
+    const full = { ...payload, categories: cats, category: cats[0] ?? null }
+    let { error } = await supabase.from('reference_items').insert(full)
+    if (error && error.message?.includes("'categories'")) {
+      ;({ error } = await supabase.from('reference_items').insert({ ...payload, category: cats[0] ?? null }))
+    }
+    return error
+  }
+
   // ── 링크 ──
   async function addLink() {
     if (!linkForm.url.trim()) return
     let url = linkForm.url.trim()
     if (!url.startsWith('http')) url = 'https://' + url
-    await supabase.from('reference_items').insert({
+    await insertRef({
       trip_id: trip.id, type: 'link',
       title: linkForm.title.trim() || url, url,
       memo: linkForm.memo.trim() || null,
-      category: linkCategory || null,
       schedule_id: null, schedule_ids: [],
-    })
+    }, linkCategories)
     setLinkForm({ url: '', title: '', memo: '' })
     setShowLinkForm(false); setLinkPage(0); loadAll()
   }
 
   // ── 사진 ──
-  async function uploadImage(file: File, category: string) {
+  async function uploadImage(file: File, cats: string[]) {
     setUploading(true)
     const ext = file.name.split('.').pop()
     const fileName = `${trip.id}/${Date.now()}.${ext}`
     const { error } = await supabase.storage.from('references').upload(fileName, file)
     if (!error) {
       const { data: urlData } = supabase.storage.from('references').getPublicUrl(fileName)
-      await supabase.from('reference_items').insert({
+      await insertRef({
         trip_id: trip.id, type: 'image',
         image_url: urlData.publicUrl, title: file.name,
-        category: category || null, schedule_id: null, schedule_ids: [],
-      })
+        schedule_id: null, schedule_ids: [],
+      }, cats)
       setImagePage(0); loadAll()
     }
     setUploading(false)
@@ -270,7 +324,12 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
 
   async function saveRefCat() {
     if (!editingRef) return
-    await supabase.from('reference_items').update({ category: editingRefCat || null }).eq('id', editingRef.id)
+    const cats = editingRefCats
+    const full = { categories: cats, category: cats[0] ?? null }
+    let { error } = await supabase.from('reference_items').update(full).eq('id', editingRef.id)
+    if (error && error.message?.includes("'categories'")) {
+      await supabase.from('reference_items').update({ category: cats[0] ?? null }).eq('id', editingRef.id)
+    }
     setEditingRef(null); loadAll()
   }
 
@@ -278,9 +337,9 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
   const images = refItems.filter(i => i.type === 'image')
 
   // ── 공통 필터 적용 ──
-  const filteredChecklist = filterCat === '전체' ? checklistItems : checklistItems.filter(i => itemCat(i) === filterCat)
-  const filteredLinks = filterCat === '전체' ? links : links.filter(i => (i.category ?? '') === filterCat)
-  const filteredImages = filterCat === '전체' ? images : images.filter(i => (i.category ?? '') === filterCat)
+  const filteredChecklist = filterCat === '전체' ? checklistItems : checklistItems.filter(i => itemCats(i).includes(filterCat))
+  const filteredLinks = filterCat === '전체' ? links : links.filter(i => refCats(i).includes(filterCat))
+  const filteredImages = filterCat === '전체' ? images : images.filter(i => refCats(i).includes(filterCat))
 
   const totalChecklistPages = Math.ceil(filteredChecklist.length / ITEMS_PER_PAGE)
   const pagedChecklist = filteredChecklist.slice(checklistPage * ITEMS_PER_PAGE, (checklistPage + 1) * ITEMS_PER_PAGE)
@@ -338,9 +397,14 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
                 className="relative rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50/50 hover:border-blue-200 cursor-pointer group p-3 flex flex-col items-center text-center transition-colors">
                 <button onClick={e => { e.stopPropagation(); deleteRole(m.id) }}
                   className="absolute top-1.5 right-1.5 text-slate-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
-                <div className="w-11 h-11 rounded-full bg-blue-100 text-blue-500 flex items-center justify-center text-sm font-bold mb-2">
-                  {m.name.slice(0, 2)}
-                </div>
+                {m.avatarUrl ? (
+                  <img src={m.avatarUrl} alt={m.name}
+                    className="w-11 h-11 rounded-full object-cover mb-2 border border-slate-200" />
+                ) : (
+                  <div className="w-11 h-11 rounded-full bg-blue-100 text-blue-500 flex items-center justify-center text-sm font-bold mb-2">
+                    {m.name.slice(0, 2)}
+                  </div>
+                )}
                 <span className="font-medium text-slate-800 text-sm truncate w-full">{m.name}</span>
                 {m.role && (
                   <span className="mt-1 text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full max-w-full truncate">{m.role}</span>
@@ -356,7 +420,19 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
           <span className="font-semibold text-slate-700 text-sm">🎒 준비물</span>
-          <button onClick={openAddItem} className="text-sm font-semibold text-blue-500 hover:text-blue-600">+ 추가</button>
+          {selMode === 'checklist' ? (
+            <div className="flex items-center gap-3">
+              <button onClick={deleteSelected} className="text-sm font-semibold text-red-500 hover:text-red-600">{selSet.size}개 삭제</button>
+              <button onClick={exitSel} className="text-sm text-slate-400 hover:text-slate-600">취소</button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              {filteredChecklist.length > 0 && (
+                <button onClick={() => enterSel('checklist')} className="text-xs text-slate-400 hover:text-slate-600">선택</button>
+              )}
+              <button onClick={openAddItem} className="text-sm font-semibold text-blue-500 hover:text-blue-600">+ 추가</button>
+            </div>
+          )}
         </div>
 
         <table className="w-full text-sm table-fixed">
@@ -376,19 +452,36 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
                 </td>
               </tr>
             ) : pagedChecklist.map(item => {
-              const cat = itemCat(item)
+              const cats = itemCats(item)
+              const picking = selMode === 'checklist'
+              const picked = selSet.has(item.id)
               return (
-                <tr key={item.id} onClick={() => openEditItem(item)} className="hover:bg-slate-50 cursor-pointer group align-top">
+                <tr key={item.id}
+                  onClick={() => picking ? toggleSel(item.id) : openEditItem(item)}
+                  className={`cursor-pointer group align-top ${picked ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
                   <td className="px-4 py-3">
-                    {cat
-                      ? <span className="inline-block text-xs bg-blue-50 text-blue-500 px-2 py-0.5 rounded-full break-keep">{catEmoji(cat)} {cat}</span>
-                      : <span className="text-xs text-slate-300">-</span>}
+                    <div className="flex items-start gap-2">
+                      {picking && (
+                        <span className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center text-[10px] shrink-0 ${
+                          picked ? 'bg-blue-500 border-blue-500 text-white' : 'border-slate-300'
+                        }`}>{picked ? '✓' : ''}</span>
+                      )}
+                      {cats.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {cats.map(c => (
+                            <span key={c} className="inline-block text-xs bg-blue-50 text-blue-500 px-2 py-0.5 rounded-full break-keep">{catEmoji(c)} {c}</span>
+                          ))}
+                        </div>
+                      ) : <span className="text-xs text-slate-300">-</span>}
+                    </div>
                   </td>
                   <td className="px-3 py-3 font-medium text-slate-800 break-words whitespace-pre-wrap">{item.title}</td>
                   <td className="px-3 py-3 text-slate-500 break-words whitespace-pre-wrap">{item.note || '-'}</td>
                   <td className="px-2 py-3">
-                    <button onClick={e => { e.stopPropagation(); deleteItem(item.id) }}
-                      className="text-slate-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
+                    {!picking && (
+                      <button onClick={e => { e.stopPropagation(); deleteItem(item.id) }}
+                        className="text-slate-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
+                    )}
                   </td>
                 </tr>
               )
@@ -407,39 +500,94 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
         )}
       </div>
 
-      {/* ── 링크 + 사진 추가 버튼 ── */}
+      {/* ── 사진 + 링크 추가 버튼 ── */}
       <div className="grid grid-cols-2 gap-3">
         <button
-          onClick={() => { setShowLinkForm(v => !v); setLinkCategory(filterCat !== '전체' ? filterCat : (allCats[0] ?? '')) }}
-          className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-medium py-3 rounded-xl flex items-center justify-center gap-2 transition-colors"
-        >
-          🔗 링크 추가
-        </button>
-        <button
-          onClick={() => { setImageCategory(filterCat !== '전체' ? filterCat : (allCats[0] ?? '')); setShowImageCatPicker(true) }}
+          onClick={() => { setImageCategories(filterCat !== '전체' ? [filterCat] : []); setShowImageCatPicker(true) }}
           disabled={uploading}
           className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-medium py-3 rounded-xl flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
         >
-          📷 {uploading ? '업로드 중...' : '사진 추가'}
+          📷 {uploading ? '업로드 중...' : '참고사진 추가'}
+        </button>
+        <button
+          onClick={() => { setShowLinkForm(v => !v); setLinkCategories(filterCat !== '전체' ? [filterCat] : []) }}
+          className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-medium py-3 rounded-xl flex items-center justify-center gap-2 transition-colors"
+        >
+          🔗 링크 추가
         </button>
       </div>
 
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
         onChange={e => {
           const f = e.target.files?.[0]
-          if (f) uploadImage(f, imageCategory)
+          if (f) uploadImage(f, imageCategories)
           e.target.value = ''
         }} />
+
+      {/* ── 사진 목록 ── */}
+      {filteredImages.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between px-1">
+            <p className="text-xs font-semibold text-slate-400">📷 참고사진</p>
+            {selMode === 'image' ? (
+              <div className="flex items-center gap-3">
+                <button onClick={deleteSelected} className="text-xs font-semibold text-red-500 hover:text-red-600">{selSet.size}개 삭제</button>
+                <button onClick={exitSel} className="text-xs text-slate-400 hover:text-slate-600">취소</button>
+              </div>
+            ) : (
+              <button onClick={() => enterSel('image')} className="text-xs text-slate-400 hover:text-slate-600">선택</button>
+            )}
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {pagedImages.map(item => {
+              const picking = selMode === 'image'
+              const picked = selSet.has(item.id)
+              return (
+                <div key={item.id}
+                  onClick={() => picking && toggleSel(item.id)}
+                  className={`relative group rounded-xl overflow-hidden aspect-square bg-slate-100 ${picking ? 'cursor-pointer' : ''} ${picked ? 'ring-2 ring-blue-500' : ''}`}>
+                  <img src={item.image_url!} alt="" className="w-full h-full object-cover" />
+                  {picking ? (
+                    <span className={`absolute top-1.5 left-1.5 w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] ${
+                      picked ? 'bg-blue-500 border-blue-500 text-white' : 'bg-white/70 border-white'
+                    }`}>{picked ? '✓' : ''}</span>
+                  ) : (
+                    <>
+                      <div className="absolute bottom-0 left-0 right-0 px-1.5 pb-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => { setEditingRef(item); setEditingRefCats(refCats(item)) }}
+                          className="w-full text-xs bg-black/60 text-white rounded-lg px-1 py-1 truncate">
+                          {refCats(item).length > 0 ? refCats(item).map(c => `${catEmoji(c)} ${c}`).join(', ') : '분류'}
+                        </button>
+                      </div>
+                      <button onClick={() => deleteRef(item.id)}
+                        className="absolute top-1.5 right-1.5 bg-black/50 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity">✕</button>
+                    </>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          {totalImagePages > 1 && (
+            <div className="flex items-center justify-center gap-3 pt-1">
+              <button onClick={() => setImagePage(p => p - 1)} disabled={imagePage === 0}
+                className="text-sm text-slate-500 hover:text-blue-500 disabled:opacity-30 px-2 py-1">← 이전</button>
+              <span className="text-xs text-slate-400">{imagePage + 1} / {totalImagePages}</span>
+              <button onClick={() => setImagePage(p => p + 1)} disabled={imagePage >= totalImagePages - 1}
+                className="text-sm text-slate-500 hover:text-blue-500 disabled:opacity-30 px-2 py-1">다음 →</button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── 링크 추가 폼 ── */}
       {showLinkForm && (
         <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
-          <h3 className="font-medium text-slate-700 text-sm">링크 추가</h3>
+          <h3 className="font-medium text-slate-700 text-sm">링크 추가 <span className="text-xs font-normal text-slate-400">(카테고리 여러 개 선택 가능)</span></h3>
           <div className="flex flex-wrap gap-2">
             {allCats.map(cat => (
-              <button key={cat} onClick={() => setLinkCategory(cat)}
+              <button key={cat} onClick={() => setLinkCategories(c => toggleCat(c, cat))}
                 className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                  linkCategory === cat ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  linkCategories.includes(cat) ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}>
                 {catEmoji(cat)} {cat}
               </button>
@@ -466,25 +614,54 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
       {/* ── 링크 목록 ── */}
       {filteredLinks.length > 0 && (
         <div className="space-y-2">
-          <p className="text-xs font-semibold text-slate-400 px-1">🔗 링크</p>
-          {pagedLinks.map(item => (
-            <div key={item.id} className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex items-center gap-3 group">
-              <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center text-sm shrink-0">🔗</div>
-              <div className="flex-1 min-w-0">
-                <a href={item.url!} target="_blank" rel="noopener noreferrer"
-                  className="font-medium text-blue-600 hover:underline text-sm truncate block">
-                  {item.title || item.url}
-                </a>
-                {item.memo && <p className="text-xs text-slate-400 mt-0.5">{item.memo}</p>}
+          <div className="flex items-center justify-between px-1">
+            <p className="text-xs font-semibold text-slate-400">🔗 링크</p>
+            {selMode === 'link' ? (
+              <div className="flex items-center gap-3">
+                <button onClick={deleteSelected} className="text-xs font-semibold text-red-500 hover:text-red-600">{selSet.size}개 삭제</button>
+                <button onClick={exitSel} className="text-xs text-slate-400 hover:text-slate-600">취소</button>
               </div>
-              <button onClick={() => { setEditingRef(item); setEditingRefCat(item.category ?? '') }}
-                className="text-xs bg-slate-100 text-slate-500 px-2 py-1 rounded-full hover:bg-blue-50 hover:text-blue-500 transition-colors shrink-0">
-                {item.category ? `${catEmoji(item.category)} ${item.category}` : '분류'}
-              </button>
-              <button onClick={() => deleteRef(item.id)}
-                className="text-slate-300 hover:text-red-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity shrink-0">✕</button>
-            </div>
-          ))}
+            ) : (
+              <button onClick={() => enterSel('link')} className="text-xs text-slate-400 hover:text-slate-600">선택</button>
+            )}
+          </div>
+          {pagedLinks.map(item => {
+            const picking = selMode === 'link'
+            const picked = selSet.has(item.id)
+            return (
+              <div key={item.id}
+                onClick={() => picking && toggleSel(item.id)}
+                className={`bg-white rounded-xl border px-4 py-3 flex items-center gap-3 group ${picking ? 'cursor-pointer' : ''} ${picked ? 'border-blue-400 ring-1 ring-blue-200 bg-blue-50/40' : 'border-slate-200'}`}>
+                {picking && (
+                  <span className={`w-5 h-5 rounded-full border flex items-center justify-center text-[10px] shrink-0 ${
+                    picked ? 'bg-blue-500 border-blue-500 text-white' : 'border-slate-300'
+                  }`}>{picked ? '✓' : ''}</span>
+                )}
+                <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center text-sm shrink-0">🔗</div>
+                <div className="flex-1 min-w-0">
+                  {picking ? (
+                    <span className="font-medium text-slate-700 text-sm truncate block">{item.title || item.url}</span>
+                  ) : (
+                    <a href={item.url!} target="_blank" rel="noopener noreferrer"
+                      className="font-medium text-blue-600 hover:underline text-sm truncate block">
+                      {item.title || item.url}
+                    </a>
+                  )}
+                  {item.memo && <p className="text-xs text-slate-400 mt-0.5">{item.memo}</p>}
+                </div>
+                {!picking && (
+                  <>
+                    <button onClick={() => { setEditingRef(item); setEditingRefCats(refCats(item)) }}
+                      className="text-xs bg-slate-100 text-slate-500 px-2 py-1 rounded-full hover:bg-blue-50 hover:text-blue-500 transition-colors shrink-0 max-w-[45%] truncate">
+                      {refCats(item).length > 0 ? refCats(item).map(c => `${catEmoji(c)} ${c}`).join(', ') : '분류'}
+                    </button>
+                    <button onClick={() => deleteRef(item.id)}
+                      className="text-slate-300 hover:text-red-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity shrink-0">✕</button>
+                  </>
+                )}
+              </div>
+            )
+          })}
           {totalLinkPages > 1 && (
             <div className="flex items-center justify-center gap-3 pt-1">
               <button onClick={() => setLinkPage(p => p - 1)} disabled={linkPage === 0}
@@ -497,43 +674,12 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
         </div>
       )}
 
-      {/* ── 사진 목록 ── */}
-      {filteredImages.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-xs font-semibold text-slate-400 px-1">📷 사진</p>
-          <div className="grid grid-cols-3 gap-2">
-            {pagedImages.map(item => (
-              <div key={item.id} className="relative group rounded-xl overflow-hidden aspect-square bg-slate-100">
-                <img src={item.image_url!} alt="" className="w-full h-full object-cover" />
-                <div className="absolute bottom-0 left-0 right-0 px-1.5 pb-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => { setEditingRef(item); setEditingRefCat(item.category ?? '') }}
-                    className="w-full text-xs bg-black/60 text-white rounded-lg px-1 py-1 truncate">
-                    {item.category ? `${catEmoji(item.category)} ${item.category}` : '분류'}
-                  </button>
-                </div>
-                <button onClick={() => deleteRef(item.id)}
-                  className="absolute top-1.5 right-1.5 bg-black/50 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity">✕</button>
-              </div>
-            ))}
-          </div>
-          {totalImagePages > 1 && (
-            <div className="flex items-center justify-center gap-3 pt-1">
-              <button onClick={() => setImagePage(p => p - 1)} disabled={imagePage === 0}
-                className="text-sm text-slate-500 hover:text-blue-500 disabled:opacity-30 px-2 py-1">← 이전</button>
-              <span className="text-xs text-slate-400">{imagePage + 1} / {totalImagePages}</span>
-              <button onClick={() => setImagePage(p => p + 1)} disabled={imagePage >= totalImagePages - 1}
-                className="text-sm text-slate-500 hover:text-blue-500 disabled:opacity-30 px-2 py-1">다음 →</button>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* 링크·사진 모두 없을 때 빈 상태 */}
       {filteredLinks.length === 0 && filteredImages.length === 0 && !showLinkForm && (
         <div className="text-center py-10 text-slate-400">
           <div className="text-4xl mb-3">📌</div>
           <p className="text-sm font-medium">
-            {filterCat === '전체' ? '링크나 사진을 추가해보세요!' : `'${filterCat}' 카테고리에 링크·사진이 없어요`}
+            {filterCat === '전체' ? '링크나 참고사진을 추가해보세요!' : `'${filterCat}' 카테고리에 링크·참고사진이 없어요`}
           </p>
         </div>
       )}
@@ -615,14 +761,14 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
         <div className="fixed inset-0 bg-black/50 flex items-end justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-md p-5 space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="font-bold text-slate-800">카테고리 선택</h3>
+              <h3 className="font-bold text-slate-800">카테고리 선택 <span className="text-xs font-normal text-slate-400">(여러 개 가능)</span></h3>
               <button onClick={() => setShowImageCatPicker(false)} className="text-slate-400 text-xl">✕</button>
             </div>
             <div className="flex flex-wrap gap-2">
               {allCats.map(cat => (
-                <button key={cat} onClick={() => setImageCategory(cat)}
+                <button key={cat} onClick={() => setImageCategories(c => toggleCat(c, cat))}
                   className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                    imageCategory === cat ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    imageCategories.includes(cat) ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}>
                   {catEmoji(cat)} {cat}
                 </button>
@@ -644,6 +790,28 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
               <h3 className="font-bold text-slate-800">{editingRole ? '역할 수정' : '역할 추가'}</h3>
               <button onClick={() => setShowRoleModal(false)} className="text-slate-400 text-xl">✕</button>
             </div>
+
+            {/* 프로필 사진 */}
+            <div className="flex flex-col items-center gap-2">
+              <input ref={avatarInputRef} type="file" accept="image/*" className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) uploadAvatar(f); e.target.value = '' }} />
+              <div className="relative">
+                {roleForm.avatarUrl ? (
+                  <img src={roleForm.avatarUrl} alt="" className="w-20 h-20 rounded-full object-cover border border-slate-200" />
+                ) : (
+                  <div className="w-20 h-20 rounded-full bg-slate-100 flex items-center justify-center text-2xl text-slate-300">👤</div>
+                )}
+                {roleForm.avatarUrl && (
+                  <button onClick={() => setRoleForm(f => ({ ...f, avatarUrl: '' }))}
+                    className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">✕</button>
+                )}
+              </div>
+              <button onClick={() => avatarInputRef.current?.click()} disabled={uploadingAvatar}
+                className="text-xs font-medium text-blue-500 hover:text-blue-600 disabled:opacity-50">
+                {uploadingAvatar ? '업로드 중...' : (roleForm.avatarUrl ? '사진 변경' : '📷 프로필 사진 추가')}
+              </button>
+            </div>
+
             <div>
               <label className="text-xs font-medium text-slate-500 mb-1 block">이름 <span className="text-red-400">*</span></label>
               <input type="text" value={roleForm.name} onChange={e => setRoleForm(f => ({ ...f, name: e.target.value }))}
@@ -683,19 +851,20 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
               <button onClick={() => setShowItemModal(false)} className="text-slate-400 text-xl">✕</button>
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-500 mb-1 block">카테고리</label>
-              <select
-                value={itemForm.category}
-                onChange={e => setItemForm(f => ({ ...f, category: e.target.value }))}
-                className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white">
-                <option value="">분류 없음</option>
+              <label className="text-xs font-medium text-slate-500 mb-1 block">카테고리 <span className="text-slate-400 font-normal">(여러 개 가능)</span></label>
+              <div className="flex flex-wrap gap-2">
                 {allCats.map(cat => (
-                  <option key={cat} value={cat}>{catEmoji(cat)} {cat}</option>
+                  <button key={cat} onClick={() => setItemForm(f => ({ ...f, categories: toggleCat(f.categories, cat) }))}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                      itemForm.categories.includes(cat) ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}>
+                    {catEmoji(cat)} {cat}
+                  </button>
                 ))}
-              </select>
+              </div>
               {(() => {
-                const sched = schedules.find(s => s.place_name === itemForm.category)
-                if (!sched || (!sched.address && !sched.time)) return null
+                const sched = schedules.find(s => itemForm.categories.includes(s.place_name) && (s.address || s.time))
+                if (!sched) return null
                 return (
                   <p className="text-[11px] text-slate-400 mt-1.5">
                     📍 일정 연동: {sched.address || '주소 없음'}{sched.time ? ` · ${sched.time}` : ''}
@@ -732,14 +901,14 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
         <div className="fixed inset-0 bg-black/50 flex items-end justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-md p-5 space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="font-bold text-slate-800">카테고리 변경</h3>
+              <h3 className="font-bold text-slate-800">카테고리 변경 <span className="text-xs font-normal text-slate-400">(여러 개 가능)</span></h3>
               <button onClick={() => setEditingRef(null)} className="text-slate-400 text-xl">✕</button>
             </div>
             <div className="flex flex-wrap gap-2">
               {allCats.map(cat => (
-                <button key={cat} onClick={() => setEditingRefCat(cat)}
+                <button key={cat} onClick={() => setEditingRefCats(c => toggleCat(c, cat))}
                   className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                    editingRefCat === cat ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    editingRefCats.includes(cat) ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}>
                   {catEmoji(cat)} {cat}
                 </button>

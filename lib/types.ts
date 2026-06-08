@@ -23,6 +23,7 @@ export interface MemberRole {
   name: string
   role: string
   note: string
+  avatarUrl?: string
 }
 
 export interface Schedule {
@@ -49,6 +50,7 @@ export interface ReferenceItem {
   image_url: string | null
   memo: string | null
   category: string | null
+  categories: string[] | null
   schedule_id: string | null
   schedule_ids: string[]
   created_at: string
@@ -68,6 +70,7 @@ export interface ChecklistItem {
   trip_id: string
   schedule_id: string | null
   category: string | null
+  categories: string[] | null
   place: string | null
   time: string | null
   title: string

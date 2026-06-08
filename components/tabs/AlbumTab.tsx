@@ -26,6 +26,20 @@ export default function AlbumTab({ trip, focusScheduleId, onFocusHandled }: Prop
   // 사진 추가 시 카테고리 선택 모달
   const [showUploadPicker, setShowUploadPicker] = useState(false)
 
+  // 선택 삭제 모드
+  const [selMode, setSelMode] = useState(false)
+  const [selSet, setSelSet] = useState<Set<string>>(new Set())
+  function exitSel() { setSelMode(false); setSelSet(new Set()) }
+  function toggleSel(id: string) {
+    setSelSet(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  }
+  async function deleteSelected() {
+    if (selSet.size === 0) { exitSel(); return }
+    if (!confirm(`${selSet.size}장을 삭제할까요?`)) return
+    await supabase.from('photos').delete().in('id', [...selSet])
+    exitSel(); loadAll()
+  }
+
   const uploadTargetRef = useRef<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -114,21 +128,36 @@ export default function AlbumTab({ trip, focusScheduleId, onFocusHandled }: Prop
           여행 앨범
           {hasPhotos && <span className="text-slate-400 font-normal text-sm ml-1">({photos.length}장)</span>}
         </h2>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowCatManage(true)}
-            className="text-sm text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition-colors font-medium"
-          >
-            카테고리 관리
-          </button>
-          <button
-            onClick={() => setShowUploadPicker(true)}
-            disabled={uploading}
-            className="text-sm text-white bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 px-3 py-1.5 rounded-lg transition-colors font-medium"
-          >
-            {uploading ? '업로드 중...' : '+ 사진 추가'}
-          </button>
-        </div>
+        {selMode ? (
+          <div className="flex items-center gap-3">
+            <button onClick={deleteSelected} className="text-sm font-semibold text-red-500 hover:text-red-600">{selSet.size}장 삭제</button>
+            <button onClick={exitSel} className="text-sm text-slate-400 hover:text-slate-600">취소</button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            {hasPhotos && (
+              <button
+                onClick={() => { setSelMode(true); setSelSet(new Set()) }}
+                className="text-sm text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition-colors font-medium"
+              >
+                선택
+              </button>
+            )}
+            <button
+              onClick={() => setShowCatManage(true)}
+              className="text-sm text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition-colors font-medium"
+            >
+              카테고리 관리
+            </button>
+            <button
+              onClick={() => setShowUploadPicker(true)}
+              disabled={uploading}
+              className="text-sm text-white bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 px-3 py-1.5 rounded-lg transition-colors font-medium"
+            >
+              {uploading ? '업로드 중...' : '+ 사진 추가'}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 빈 상태 — 사진 없을 때 */}
@@ -162,32 +191,44 @@ export default function AlbumTab({ trip, focusScheduleId, onFocusHandled }: Prop
                     {cat.label}
                     <span className="font-normal text-slate-400 ml-1">({catPhotos.length}장)</span>
                   </span>
-                  <button
-                    onClick={() => triggerUpload(cat.id)}
-                    disabled={uploading}
-                    className="text-xs text-white bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 px-3 py-1 rounded-lg transition-colors shrink-0"
-                  >
-                    {uploading ? '...' : '+ 사진'}
-                  </button>
+                  {!selMode && (
+                    <button
+                      onClick={() => triggerUpload(cat.id)}
+                      disabled={uploading}
+                      className="text-xs text-white bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 px-3 py-1 rounded-lg transition-colors shrink-0"
+                    >
+                      {uploading ? '...' : '+ 사진'}
+                    </button>
+                  )}
                 </div>
 
                 <div className="p-2 grid grid-cols-3 gap-1.5">
-                  {catPhotos.map(photo => (
+                  {catPhotos.map(photo => {
+                    const picked = selSet.has(photo.id)
+                    return (
+                      <div
+                        key={photo.id}
+                        onClick={() => selMode ? toggleSel(photo.id) : setSelected(photo)}
+                        className={`relative aspect-square rounded-lg overflow-hidden bg-slate-100 cursor-pointer hover:opacity-90 transition-opacity ${picked ? 'ring-2 ring-blue-500' : ''}`}
+                      >
+                        <img src={photo.image_url} alt="" className="w-full h-full object-cover" />
+                        {selMode && (
+                          <span className={`absolute top-1 left-1 w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] ${
+                            picked ? 'bg-blue-500 border-blue-500 text-white' : 'bg-white/70 border-white'
+                          }`}>{picked ? '✓' : ''}</span>
+                        )}
+                      </div>
+                    )
+                  })}
+                  {!selMode && (
                     <div
-                      key={photo.id}
-                      onClick={() => setSelected(photo)}
-                      className="aspect-square rounded-lg overflow-hidden bg-slate-100 cursor-pointer hover:opacity-90 transition-opacity"
+                      onClick={() => triggerUpload(cat.id)}
+                      className="aspect-square rounded-lg border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 cursor-pointer hover:border-blue-300 hover:text-blue-400 transition-colors"
                     >
-                      <img src={photo.image_url} alt="" className="w-full h-full object-cover" />
+                      <span className="text-xl">+</span>
+                      <span className="text-xs mt-0.5">추가</span>
                     </div>
-                  ))}
-                  <div
-                    onClick={() => triggerUpload(cat.id)}
-                    className="aspect-square rounded-lg border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 cursor-pointer hover:border-blue-300 hover:text-blue-400 transition-colors"
-                  >
-                    <span className="text-xl">+</span>
-                    <span className="text-xs mt-0.5">추가</span>
-                  </div>
+                  )}
                 </div>
               </div>
             )
