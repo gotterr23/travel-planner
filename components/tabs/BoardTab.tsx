@@ -299,21 +299,23 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
     setShowLinkForm(false); setLinkPage(0); loadAll()
   }
 
-  // ── 사진 ──
-  async function uploadImage(file: File, cats: string[]) {
+  // ── 참고사진 (여러 장 한 번에) ──
+  async function uploadImages(files: FileList, cats: string[]) {
     setUploading(true)
-    const ext = file.name.split('.').pop()
-    const fileName = `${trip.id}/${Date.now()}.${ext}`
-    const { error } = await supabase.storage.from('references').upload(fileName, file)
-    if (!error) {
-      const { data: urlData } = supabase.storage.from('references').getPublicUrl(fileName)
-      await insertRef({
-        trip_id: trip.id, type: 'image',
-        image_url: urlData.publicUrl, title: file.name,
-        schedule_id: null, schedule_ids: [],
-      }, cats)
-      setImagePage(0); loadAll()
+    for (const file of Array.from(files)) {
+      const ext = file.name.split('.').pop()
+      const fileName = `${trip.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const { error } = await supabase.storage.from('references').upload(fileName, file)
+      if (!error) {
+        const { data: urlData } = supabase.storage.from('references').getPublicUrl(fileName)
+        await insertRef({
+          trip_id: trip.id, type: 'image',
+          image_url: urlData.publicUrl, title: file.name,
+          schedule_id: null, schedule_ids: [],
+        }, cats)
+      }
     }
+    setImagePage(0); loadAll()
     setUploading(false)
   }
 
@@ -517,10 +519,9 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
         </button>
       </div>
 
-      <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
+      <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden"
         onChange={e => {
-          const f = e.target.files?.[0]
-          if (f) uploadImage(f, imageCategories)
+          if (e.target.files?.length) uploadImages(e.target.files, imageCategories)
           e.target.value = ''
         }} />
 
@@ -778,6 +779,7 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
               className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 rounded-xl">
               사진 선택하기
             </button>
+            <p className="text-[11px] text-slate-400 text-center">여러 장 한 번에 선택할 수 있어요</p>
           </div>
         </div>
       )}
