@@ -332,22 +332,20 @@ export default function BoardTab({ trip, focusScheduleId, onFocusHandled }: Prop
             + 추가 버튼으로 멤버별 역할을 정해보세요
           </div>
         ) : (
-          <div className="divide-y divide-slate-50">
+          <div className="grid grid-cols-3 gap-2 p-3">
             {memberRoles.map(m => (
               <div key={m.id} onClick={() => openEditRole(m)}
-                className="px-4 py-3 flex items-center gap-3 hover:bg-slate-50 cursor-pointer group">
-                <div className="w-9 h-9 rounded-full bg-blue-50 text-blue-500 flex items-center justify-center text-sm font-bold shrink-0">
+                className="relative rounded-xl border border-slate-100 bg-slate-50 hover:bg-blue-50/50 hover:border-blue-200 cursor-pointer group p-3 flex flex-col items-center text-center transition-colors">
+                <button onClick={e => { e.stopPropagation(); deleteRole(m.id) }}
+                  className="absolute top-1.5 right-1.5 text-slate-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity text-xs">✕</button>
+                <div className="w-11 h-11 rounded-full bg-blue-100 text-blue-500 flex items-center justify-center text-sm font-bold mb-2">
                   {m.name.slice(0, 2)}
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium text-slate-800 text-sm">{m.name}</span>
-                    {m.role && <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">{m.role}</span>}
-                  </div>
-                  {m.note && <p className="text-xs text-slate-400 mt-0.5 truncate">{m.note}</p>}
-                </div>
-                <button onClick={e => { e.stopPropagation(); deleteRole(m.id) }}
-                  className="text-slate-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity text-xs shrink-0">✕</button>
+                <span className="font-medium text-slate-800 text-sm truncate w-full">{m.name}</span>
+                {m.role && (
+                  <span className="mt-1 text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full max-w-full truncate">{m.role}</span>
+                )}
+                {m.note && <p className="text-[11px] text-slate-400 mt-1 line-clamp-2 w-full">{m.note}</p>}
               </div>
             ))}
           </div>
